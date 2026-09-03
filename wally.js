@@ -897,8 +897,14 @@ async function cmdDaemon(args) {
     const pidFile = path.join(WALLY_DIR, 'daemon.pid');
     if (fs.existsSync(pidFile)) {
       const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim());
-      console.log(`[Wally Daemon] Stopping PID ${pid}...`);
-      process.kill(pid, 'SIGINT');
+      try {
+        process.kill(pid, 0); // check if alive
+        console.log(`[Wally Daemon] Stopping PID ${pid}...`);
+        process.kill(pid, 'SIGINT');
+      } catch {
+        console.log(`[Wally Daemon] PID ${pid} not running (stale pid file)`);
+        fs.unlinkSync(pidFile);
+      }
     } else {
       console.log('[Wally Daemon] Not running');
     }
