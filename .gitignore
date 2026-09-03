@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Wally sessions
+/tmp/wally/
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test output
+*-export.spec.js
