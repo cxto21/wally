@@ -25,6 +25,8 @@ const CDP_URL = 'http://127.0.0.1:9222';
 const WALLY_DIR = '/tmp/opencode/wally';
 const SESSIONS_DIR = path.join(WALLY_DIR, 'sessions');
 const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || 'MMOR4MORA!';
+const CHROME_DATA_DIR = '/tmp/opencode/chrome-cdp';
+const CHROME_DEFAULT_PROFILE = 'Profile 9';
 
 // ═══════════════════════════════════════════════════════════════════
 // SNAPSHOT — libretto MIT primitive
@@ -155,6 +157,125 @@ async function connect() {
   // Find main page (not an extension)
   const page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
   return { browser, context, page };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CHROME AUTO-LAUNCH — detect CDP, prompt to start if needed
+// ═══════════════════════════════════════════════════════════════════
+
+const http = require('http');
+
+function checkCDP() {
+  return new Promise((resolve) => {
+    http.get(`${CDP_URL}/json/version`, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => resolve({ ok: true, data }));
+    }).on('error', () => resolve({ ok: false }));
+  });
+}
+
+function killChrome() {
+  try {
+    const { execSync } = require('child_process');
+    execSync('pkill -9 -f "chrome.*remote-debugging-port"', { stdio: 'ignore' });
+  } catch {}
+}
+
+function setupChromeDataDir(profileName) {
+  const fs = require('fs');
+  fs.mkdirSync(CHROME_DATA_DIR, { recursive: true });
+
+  const srcProfile = path.join(
+    require('os').homedir(),
+    '.config/google-chrome',
+    profileName
+  );
+  const dstProfile = path.join(CHROME_DATA_DIR, profileName);
+
+  // Symlink profile (Chrome resolves user-data-dir but not profile dirs inside)
+  if (!fs.existsSync(dstProfile)) {
+    try { fs.symlinkSync(srcProfile, dstProfile); } catch {}
+  }
+
+  // Copy Local State (needed for profile discovery)
+  const srcLocalState = path.join(require('os').homedir(), '.config/google-chrome', 'Local State');
+  const dstLocalState = path.join(CHROME_DATA_DIR, 'Local State');
+  if (fs.existsSync(srcLocalState) && !fs.existsSync(dstLocalState)) {
+    fs.copyFileSync(srcLocalState, dstLocalState);
+  }
+
+  // Fix broken Service Worker cache symlinks in profile
+  const swCacheDir = path.join(dstProfile, 'Service Worker', 'CacheStorage');
+  if (!fs.existsSync(swCacheDir)) {
+    fs.mkdirSync(swCacheDir, { recursive: true });
+  }
+}
+
+function launchChrome(profileName, url) {
+  setupChromeDataDir(profileName);
+  const flags = [
+    '--remote-debugging-port=9222',
+    `--user-data-dir=${CHROME_DATA_DIR}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+  ];
+  if (url) flags.push(url);
+
+  const { spawn } = require('child_process');
+  const child = spawn('google-chrome', flags, {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+}
+
+async function ensureCDP(profileName, url) {
+  const status = await checkCDP();
+  if (status.ok) return true;
+
+  // Chrome not running — ask to launch
+  const profile = profileName || CHROME_DEFAULT_PROFILE;
+  console.log(`[Wally] Chrome CDP not detected on port 9222.`);
+  const answer = await prompt(`Start Chrome with profile "${profile}"? (Y/n) `);
+  if (answer === 'n' || answer === 'N') {
+    console.log('[Wally] Aborted.');
+    return false;
+  }
+
+  // Kill existing Chrome if any
+  const hasChrome = require('child_process')
+    .execSync('pgrep -f "chrome" || true', { encoding: 'utf8' }).trim();
+  if (hasChrome) {
+    console.log('[Wally] Killing existing Chrome...');
+    killChrome();
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  console.log(`[Wally] Starting Chrome with profile "${profile}"...`);
+  launchChrome(profile, url);
+
+  // Wait for CDP to become available
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    const check = await checkCDP();
+    if (check.ok) {
+      console.log('[Wally] Chrome CDP ready.');
+      return true;
+    }
+  }
+  console.log('[Wally] Chrome started but CDP not ready. Try again in a few seconds.');
+  return false;
+}
+
+function prompt(question) {
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    process.stdin.setEncoding('utf8');
+    process.stdin.once('data', (data) => {
+      resolve(data.trim() || 'Y');
+    });
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -763,6 +884,12 @@ async function cmdDaemon(args) {
 
   if (sub === 'start') {
     const url = getArg(args, '--url');
+    const profile = getArg(args, '--profile') || CHROME_DEFAULT_PROFILE;
+
+    // Ensure Chrome CDP is available
+    const ok = await ensureCDP(profile, url);
+    if (!ok) return;
+
     const daemon = new WallyDaemon();
     await daemon.start({ url });
   } else if (sub === 'stop') {
@@ -783,18 +910,20 @@ async function cmdDaemon(args) {
 Wally Daemon — Background Multi-Page Recorder
 
 Usage:
-  node wally.js daemon start [--url <url>]   Start recording (optionally navigate to URL)
-  node wally.js daemon stop                  Stop daemon + show summary
-  node wally.js daemon status                Show active pages + action counts
+  node wally.js daemon start [--url <url>] [--profile <name>]   Start recording
+  node wally.js daemon stop                                      Stop daemon
+  node wally.js daemon status                                    Show pages + actions
+
+Options:
+  --url <url>       Navigate to URL before recording
+  --profile <name>  Chrome profile to use (default: "Profile 9")
+
+If Chrome CDP is not running, Wally will ask to launch it automatically.
 
 Examples:
   node wally.js daemon start                          Record current page
   node wally.js daemon start --url https://avnu.fi   Navigate + record
-  node wally.js daemon start --url https://app.uniswap.org
-
-The daemon monitors Chrome via CDP and automatically records
-actions on any page that opens (including extension popups).
-Works with ANY wallet extension (MetaMask, Ready, Argent, etc.).
+  node wally.js daemon start --profile "Profile 1"   Use different profile
 `);
   }
 }
@@ -836,6 +965,10 @@ Commands:
   node wally.js daemon start               Start background multi-page recording
   node wally.js daemon stop                Stop daemon + show summary
   node wally.js daemon status              Show active pages + action counts
+
+Options:
+  --profile <name>  Chrome profile (default: "Profile 9")
+  --url <url>       Navigate to URL
 
 CDP: ${CDP_URL}
 Sessions: ${SESSIONS_DIR}
