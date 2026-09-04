@@ -733,11 +733,16 @@ const CDP_URL = '${CDP_URL}';
         const text = sel.match(/"(.+)"/)?.[1] || sel;
         const role = sel.split(' ')[0];
         test += `${indent}await ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first().click({ timeout: 5000 });\n`;
-      } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.includes(' > ') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p')) {
-        // CSS path (fallback nth-child) — use locator, not getByRole
-        test += `${indent}await ${target}.locator('${sel}').first().click({ timeout: 5000 });\n`;
+      } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
+        // CSS path (fallback nth-child) — fragile
+        const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && (action.text || '').length > 15;
+        if (isTextOnly) {
+          test += `${indent}// Skipped non-interactive click: ${sel} "${(action.text || '').substring(0, 40).replace(/'/g, "\\'")}"\n`;
+        } else {
+          test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
+        }
       } else {
-        test += `${indent}await ${target}.locator('${sel}').first().click({ timeout: 5000 });\n`;
+        test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
       }
       test += `${indent}await page.waitForTimeout(1000);\n`;
     } else if (action.type === 'fill') {
