@@ -733,8 +733,11 @@ const CDP_URL = '${CDP_URL}';
         const text = sel.match(/"(.+)"/)?.[1] || sel;
         const role = sel.split(' ')[0];
         test += `${indent}await ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first().click({ timeout: 5000 });\n`;
+      } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.includes(' > ') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p')) {
+        // CSS path (fallback nth-child) — use locator, not getByRole
+        test += `${indent}await ${target}.locator('${sel}').first().click({ timeout: 5000 });\n`;
       } else {
-        test += `${indent}await ${target}.getByRole('${sel}').first().click({ timeout: 5000 });\n`;
+        test += `${indent}await ${target}.locator('${sel}').first().click({ timeout: 5000 });\n`;
       }
       test += `${indent}await page.waitForTimeout(1000);\n`;
     } else if (action.type === 'fill') {
