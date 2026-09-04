@@ -661,12 +661,20 @@ async function cmdExport(args) {
 
   // Detect extension ID from recorded actions (if any extension was used)
   let detectedExtId = null;
+  let detectedExtFullId = null;
   for (const action of actions) {
-    if (action.page && action.page.startsWith('ext:')) {
-      // Extract extension ID from page label (format: "ext:dlcobpji")
-      const match = action.page.match(/ext:(.+)/);
-      if (match) detectedExtId = match[1];
-      break;
+    if (action.url && action.url.includes('chrome-extension://')) {
+      const m = action.url.match(/chrome-extension:\/\/([a-z]+)/);
+      if (m) { detectedExtFullId = m[1]; detectedExtId = m[1].substring(0, 8); break; }
+    }
+  }
+  if (!detectedExtFullId) {
+    for (const action of actions) {
+      if (action.page && action.page.startsWith('ext:')) {
+        const match = action.page.match(/ext:(.+)/);
+        if (match) detectedExtId = match[1];
+        break;
+      }
     }
   }
 
@@ -709,6 +717,14 @@ const CDP_URL = '${CDP_URL}';
       test += `      await page.waitForTimeout(1000);\n`;
       test += `    }\n`;
       test += `  }\n`;
+      if (detectedExtFullId) {
+        test += `  if (!extPage) {\n`;
+        test += `    console.log('[Wally] Extension not auto-opened, opening as tab...');\n`;
+        test += `    extPage = await context.newPage();\n`;
+        test += `    await extPage.goto('chrome-extension://${detectedExtFullId}/index.html', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});\n`;
+        test += `    await extPage.waitForTimeout(2000);\n`;
+        test += `  }\n`;
+      }
       test += `  if (extPage) {\n`;
       test += `    await extPage.bringToFront().catch(() => {});\n`;
       test += `    await extPage.waitForLoadState('domcontentloaded').catch(() => {});\n`;
@@ -737,13 +753,17 @@ const CDP_URL = '${CDP_URL}';
         const role = sel.split(' ')[0];
         test += `${indent}await ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first().click({ timeout: 5000 });\n`;
       } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
-        // CSS path (fallback nth-child) — fragile, skip only pure informational text (not wallet options)
+        // CSS path (fallback nth-child) — fragile
         const text = action.text || '';
         const walletKeywords = ['Ready', 'Argent', 'Braavos', 'Wallet', 'Carrot', 'STRK', 'Connect'];
         const isWalletOption = walletKeywords.some(k => text.includes(k));
         const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && text.length > 15 && !isWalletOption;
         if (isTextOnly) {
           test += `${indent}// Skipped non-interactive text: ${sel} "${text.substring(0, 40).replace(/'/g, "\\'")}"\n`;
+        } else if (isWalletOption && text) {
+          // Wallet selector in StarknetKit modal — use text locator, more robust than CSS path
+          const escText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').substring(0, 30);
+          test += `${indent}await ${target}.getByText(/${escText}/i).first().click({ timeout: 5000 });\n`;
         } else {
           test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
         }

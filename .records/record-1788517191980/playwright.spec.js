@@ -21,7 +21,7 @@ const CDP_URL = 'http://127.0.0.1:9222';
   await page.waitForTimeout(3000);
   await page.getByRole('button', { name: /Connect Wallet/i }).first().click({ timeout: 5000 });
   await page.waitForTimeout(1000);
-  await page.locator('div > div > p').first().click({ force: true, timeout: 5000 });
+  await page.getByText(/Ready Wallet \(formerly Argent/i).first().click({ timeout: 5000 });
   await page.waitForTimeout(1000);
 
   // Switch to extension page (any chrome-extension:// URL)
@@ -34,6 +34,12 @@ const CDP_URL = 'http://127.0.0.1:9222';
       console.log('[Wally] Waiting for extension popup...', i);
       await page.waitForTimeout(1000);
     }
+  }
+  if (!extPage) {
+    console.log('[Wally] Extension not auto-opened, opening as tab...');
+    extPage = await context.newPage();
+    await extPage.goto('chrome-extension://dlcobpjiigpikoobohmabehhmhfoodbb/index.html', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
+    await extPage.waitForTimeout(2000);
   }
   if (extPage) {
     await extPage.bringToFront().catch(() => {});
