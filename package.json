@@ -1,7 +1,7 @@
 {
   "name": "wally",
   "version": "1.0.0",
-  "description": "AI-powered workflow recorder — built on libretto MIT primitives. Records browser actions via Chrome CDP and exports Playwright tests.",
+  "description": "AI-powered workflow recorder. Records browser actions via Chrome CDP and exports standalone Playwright test scripts.",
   "main": "wally.js",
   "bin": {
     "wally": "./wally.js"
@@ -20,7 +20,6 @@
     "playwright",
     "chrome-cdp",
     "workflow-recorder",
-    "libretto",
     "testing"
   ],
   "author": "Ownerz Team",

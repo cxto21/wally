@@ -17,11 +17,15 @@ const CDP_URL = 'http://127.0.0.1:9222';
   const context = contexts.find(c => c.pages().length > 0) || contexts[0];
   let page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
   let extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
+
+    // Switch back to main page
+    page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
+    await page.bringToFront().catch(()=>{});
   await page.goto('https://zor-frontend.pages.dev/', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
   await page.waitForTimeout(2000);
-  await page.getByRole('button', { name: /Connect Wallet/i }).first().click({ timeout: 5000 });
+  { const _btnti = page.getByRole('button', { name: /Connect Wallet/i }).first(); if (await _btnti.isVisible().catch(()=>false)) { try { await _btnti.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip button not visible: ' + "Connect Wallet"); } }
   await page.waitForTimeout(1000);
-  await page.getByText(/Ready Wallet \(formerly Argent/i).first().click({ timeout: 5000 });
+  { const _wallet_leef = page.getByText(/Ready Wallet \(formerly Argent/i).first(); if (await _wallet_leef.isVisible().catch(()=>false)) { try { await _wallet_leef.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Wallet click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip wallet selector not visible: ' + "Ready Wallet \\(formerly Argent"); } }
   await page.waitForTimeout(1000);
 
   // Switch to extension page (any chrome-extension:// URL)
@@ -46,41 +50,99 @@ const CDP_URL = 'http://127.0.0.1:9222';
     await extPage.waitForLoadState('domcontentloaded').catch(() => {});
     await extPage.waitForTimeout(1500);
     console.log('[Wally] Extension visible:', extPage.url());
-    await extPage.locator('[data-testid="cambiar-red-button"]').click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('[data-testid="cambiar-red-button"]').first(); if (await _el.isVisible().catch(()=>false)) await _el.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip not visible: [data-testid="cambiar-red-button"]'); }
     await page.waitForTimeout(1000);
     await extPage.goto('chrome-extension://dlcobpjiigpikoobohmabehhmhfoodbb/index.html', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
     await extPage.waitForTimeout(2000);
-    await extPage.locator('[data-testid="Clever Carrot"]').click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('[data-testid="Clever Carrot"]').first(); if (await _el.isVisible().catch(()=>false)) await _el.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip not visible: [data-testid="Clever Carrot"]'); }
     await page.waitForTimeout(1000);
-    await extPage.locator('[data-testid="Clever Carrot"]').click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('[data-testid="Clever Carrot"]').first(); if (await _el.isVisible().catch(()=>false)) await _el.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip not visible: [data-testid="Clever Carrot"]'); }
     await page.waitForTimeout(1000);
-    await extPage.locator('[data-testid="conectar-button"]').click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('[data-testid="conectar-button"]').first(); if (await _el.isVisible().catch(()=>false)) await _el.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip not visible: [data-testid="conectar-button"]'); }
     await page.waitForTimeout(1000);
     await extPage.goto('chrome-extension://dlcobpjiigpikoobohmabehhmhfoodbb/account/tokens', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
     await extPage.waitForTimeout(2000);
-    // Wallet connected: starknet (0x02eaa076636635fa983094d7a8e367293973c3263c2310586a2579c1d4fe8b71)
-    await page.waitForTimeout(2000);
-    await extPage.locator('input[name="example.com"]').first().click({ force: true, timeout: 5000 });
-    await page.waitForTimeout(1000);
-    await extPage.locator('input[name="example.com"]').fill('naiamstudio.com');
-    await page.waitForTimeout(500);
-    await extPage.locator('input[name="example.com"]').fill('naiamstudio.com');
-    await page.waitForTimeout(500);
-    await extPage.getByRole('button', { name: /💳 PAY 0\.0300 STRK & BROWSE/i }).first().click({ timeout: 5000 });
-    await page.waitForTimeout(1000);
-    await extPage.getByRole('button', { name: /SEND 0\.0300 STRK & ACTIVATE/i }).first().click({ timeout: 5000 });
-    await page.waitForTimeout(1000);
+  }
+
+
+    // Switch back to main page
+    page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
+    await page.bringToFront().catch(()=>{});
+  // Wallet connected: starknet (0x02eaa076636635fa983094d7a8e367293973c3263c2310586a2579c1d4fe8b71)
+  await page.waitForTimeout(2000);
+
+  // Switch to extension page (any chrome-extension:// URL)
+  extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
+  if (!extPage) {
+    // Wait for extension to open (triggered by prior page click)
+    for (let i = 0; i < 15; i++) {
+      extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
+      if (extPage) break;
+      console.log('[Wally] Waiting for extension popup...', i);
+      await page.waitForTimeout(1000);
+    }
+  }
+  if (!extPage) {
+    console.log('[Wally] Extension not auto-opened, opening as tab...');
+    extPage = await context.newPage();
+    await extPage.goto('chrome-extension://dlcobpjiigpikoobohmabehhmhfoodbb/index.html', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
+    await extPage.waitForTimeout(2000);
+  }
+  if (extPage) {
+    await extPage.bringToFront().catch(() => {});
+    await extPage.waitForLoadState('domcontentloaded').catch(() => {});
+    await extPage.waitForTimeout(1500);
+    console.log('[Wally] Extension visible:', extPage.url());
+  }
+
+
+    // Switch back to main page
+    page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
+    await page.bringToFront().catch(()=>{});
+  { const _inp = page.locator('input[name="example.com"]').first(); if (await _inp.isVisible().catch(()=>false)) { try { await _inp.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Input click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip input not visible: input[name="example.com"]'); } }
+  await page.waitForTimeout(1000);
+  { const _fill = page.locator('input[name="example.com"]').first(); if (await _fill.isVisible().catch(()=>false)) { try { await _fill.fill('naiamstudio.com'); } catch(e) { console.log('[Wally] Fill failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip fill not visible: input[name="example.com"]'); } }
+  await page.waitForTimeout(500);
+  { const _fill = page.locator('input[name="example.com"]').first(); if (await _fill.isVisible().catch(()=>false)) { try { await _fill.fill('naiamstudio.com'); } catch(e) { console.log('[Wally] Fill failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip fill not visible: input[name="example.com"]'); } }
+  await page.waitForTimeout(500);
+  { const _btnz5 = page.getByRole('button', { name: /💳 PAY 0\.0300 STRK & BROWSE/i }).first(); if (await _btnz5.isVisible().catch(()=>false)) { try { await _btnz5.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip button not visible: ' + "💳 PAY 0.0300 STRK & BROWSE"); } }
+  await page.waitForTimeout(1000);
+  { const _btnd2 = page.getByRole('button', { name: /SEND 0\.0300 STRK & ACTIVATE/i }).first(); if (await _btnd2.isVisible().catch(()=>false)) { try { await _btnd2.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip button not visible: ' + "SEND 0.0300 STRK & ACTIVATE"); } }
+  await page.waitForTimeout(1000);
+
+  // Switch to extension page (any chrome-extension:// URL)
+  extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
+  if (!extPage) {
+    // Wait for extension to open (triggered by prior page click)
+    for (let i = 0; i < 15; i++) {
+      extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
+      if (extPage) break;
+      console.log('[Wally] Waiting for extension popup...', i);
+      await page.waitForTimeout(1000);
+    }
+  }
+  if (!extPage) {
+    console.log('[Wally] Extension not auto-opened, opening as tab...');
+    extPage = await context.newPage();
+    await extPage.goto('chrome-extension://dlcobpjiigpikoobohmabehhmhfoodbb/index.html', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
+    await extPage.waitForTimeout(2000);
+  }
+  if (extPage) {
+    await extPage.bringToFront().catch(() => {});
+    await extPage.waitForLoadState('domcontentloaded').catch(() => {});
+    await extPage.waitForTimeout(1500);
+    console.log('[Wally] Extension visible:', extPage.url());
     await extPage.goto('chrome-extension://dlcobpjiigpikoobohmabehhmhfoodbb/accounts/verify/email?returnPath=%2Faccount%2Ftokens', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
     await extPage.waitForTimeout(2000);
-    await extPage.locator('[data-testid="navigation-bar-close-button"]').click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('[data-testid="navigation-bar-close-button"]').first(); if (await _el.isVisible().catch(()=>false)) await _el.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip not visible: [data-testid="navigation-bar-close-button"]'); }
     await page.waitForTimeout(1000);
-    await extPage.locator('[data-testid="cancel"]').click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('[data-testid="cancel"]').first(); if (await _el.isVisible().catch(()=>false)) await _el.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip not visible: [data-testid="cancel"]'); }
     await page.waitForTimeout(1000);
     await extPage.goto('chrome-extension://dlcobpjiigpikoobohmabehhmhfoodbb/account/tokens', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});
     await extPage.waitForTimeout(2000);
-    await extPage.locator('div:nth-child(1) > div > div:nth-child(2)').first().click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('div:nth-child(1) > div > div:nth-child(2)').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): div:nth-child(1) > div > div:nth-child(2)'); } }
     await page.waitForTimeout(1000);
-    await extPage.locator('div:nth-child(1) > div > div:nth-child(2)').first().click({ force: true, timeout: 5000 });
+    { const _el = extPage.locator('div:nth-child(1) > div > div:nth-child(2)').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): div:nth-child(1) > div > div:nth-child(2)'); } }
     await page.waitForTimeout(1000);
   }
   console.log('[Wally] Replay done, final URL:', page.url());

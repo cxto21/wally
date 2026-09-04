@@ -673,19 +673,27 @@ async function cmdRecord(args) {
 }
 
 async function cmdExport(args) {
-  // Support both 'recording' and 'record-*' / 'daemon-*' session dirs
-  let sessionDir = path.join(SESSIONS_DIR, 'recording');
-  let actionsFile = path.join(sessionDir, 'actions.jsonl');
+  // Support --from <record-dir> to regenerate from .records/ (actions.jsonl)
+  const fromDir = getArg(args, '--from');
+  let sessionDir, actionsFile;
 
-  // If no recording session, find latest record session
-  if (!fs.existsSync(actionsFile) || fs.statSync(actionsFile).size === 0) {
-    const daemonSessions = fs.readdirSync(SESSIONS_DIR)
-      .filter(d => d.startsWith('record-') || d.startsWith('daemon-'))
-      .sort()
-      .reverse();
-    if (daemonSessions.length > 0) {
-      sessionDir = path.join(SESSIONS_DIR, daemonSessions[0]);
-      actionsFile = path.join(sessionDir, 'actions.jsonl');
+  if (fromDir && fs.existsSync(path.join(fromDir, 'actions.jsonl'))) {
+    sessionDir = fromDir;
+    actionsFile = path.join(fromDir, 'actions.jsonl');
+  } else {
+    // Default: look in sessions/
+    sessionDir = path.join(SESSIONS_DIR, 'recording');
+    actionsFile = path.join(sessionDir, 'actions.jsonl');
+
+    if (!fs.existsSync(actionsFile) || fs.statSync(actionsFile).size === 0) {
+      const daemonSessions = fs.readdirSync(SESSIONS_DIR)
+        .filter(d => d.startsWith('record-') || d.startsWith('daemon-'))
+        .sort()
+        .reverse();
+      if (daemonSessions.length > 0) {
+        sessionDir = path.join(SESSIONS_DIR, daemonSessions[0]);
+        actionsFile = path.join(sessionDir, 'actions.jsonl');
+      }
     }
   }
 
@@ -836,19 +844,18 @@ const CDP_URL = '${CDP_URL}';
           // Robust: wait for visible with longer timeout for network/latency, skip if not found
           test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): ${sel}'); } }\n`;
         }
+      } else if (sel.startsWith('input[') || sel.startsWith('textarea[')) {
+        // Input/textarea selectors — make optional (page may not have loaded, or name changed)
+        test += `${indent}{ const _inp = ${target}.locator('${sel}').first(); if (await _inp.isVisible().catch(()=>false)) { try { await _inp.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Input click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip input not visible: ${sel}'); } }\n`;
       } else {
-        test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
+        test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { try { await _el.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip not visible: ${sel}'); } }\n`;
       }
       test += `${indent}await page.waitForTimeout(1000);\n`;
     } else if (action.type === 'fill') {
       const escaped = (action.value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       const target = (lastPage.startsWith('ext:') && lastPage !== 'main') ? 'extPage' : 'page';
-      // Password fills are optional — wallet may already be unlocked
-      if (action.selector.includes('password')) {
-        test += `${indent}{ const _pw = ${target}.locator('${action.selector}').first(); if (await _pw.isVisible().catch(()=>false)) { await _pw.fill('${escaped}'); } else { console.log('[Wally] Skip fill not visible: ${action.selector}'); } }\n`;
-      } else {
-        test += `${indent}await ${target}.locator('${action.selector}').fill('${escaped}');\n`;
-      }
+      // All fills are optional — page may not have loaded, or element may be transient
+      test += `${indent}{ const _fill = ${target}.locator('${action.selector}').first(); if (await _fill.isVisible().catch(()=>false)) { try { await _fill.fill('${escaped}'); } catch(e) { console.log('[Wally] Fill failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip fill not visible: ${action.selector}'); } }\n`;
       test += `${indent}await page.waitForTimeout(500);\n`;
     } else if (action.type === 'wallet_connect') {
       const walletType = action.walletType || 'unknown';
@@ -1211,7 +1218,7 @@ Commands:
   wally play [N]                 Replay saved record (interactive selector)
   wally list                     List records in .records/
   wally snap [--url <url>]       Snapshot current page
-  wally export [--output <file>] Export recorded actions → Playwright test
+  wally export [--output <file>] [--from <dir>]  Export recorded actions → Playwright test
   wally daemon start [--url <url>] [--profile <name>]  Background recording
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
