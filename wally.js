@@ -22,8 +22,9 @@ const fs = require('fs');
 const path = require('path');
 
 const CDP_URL = 'http://127.0.0.1:9222';
-const WALLY_DIR = path.join(__dirname, '.records');
+const WALLY_DIR = '/tmp/opencode/wally';
 const SESSIONS_DIR = path.join(WALLY_DIR, 'sessions');
+const RECORDS_DIR = path.join(__dirname, '.records');
 const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || 'MMOR4MORA!';
 const CHROME_DATA_DIR = '/tmp/opencode/chrome-cdp';
 const CHROME_DEFAULT_PROFILE = 'Profile 9';
@@ -774,6 +775,18 @@ describe('DVX Workflow', () => {
   console.log(`[Wally] Pages: ${Array.from(pages.keys()).join(', ')}`);
   if (detectedExtId) console.log(`[Wally] Extension detected: ${detectedExtId}`);
   console.log(`[Wally] Run: npx playwright test ${outputPath}`);
+
+  // Also copy to clean .records/<sessionId>/ for visibility
+  try {
+    const sessionId = path.basename(sessionDir);
+    const cleanDir = path.join(RECORDS_DIR, sessionId);
+    fs.mkdirSync(cleanDir, { recursive: true });
+    if (fs.existsSync(actionsFile)) {
+      fs.copyFileSync(actionsFile, path.join(cleanDir, 'actions.jsonl'));
+    }
+    fs.writeFileSync(path.join(cleanDir, 'playwright.spec.js'), test);
+    console.log(`[Wally] Clean copy → ${cleanDir}/ (actions.jsonl + playwright.spec.js)`);
+  } catch {}
 }
 
 async function cmdWallet(args) {
@@ -950,6 +963,7 @@ async function main() {
 
   fs.mkdirSync(WALLY_DIR, { recursive: true });
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  fs.mkdirSync(RECORDS_DIR, { recursive: true });
 
   switch (cmd) {
     case 'snap': await cmdSnap(args.slice(1)); break;
@@ -977,7 +991,8 @@ Options:
   --url <url>       Navigate to URL
 
 CDP: ${CDP_URL}
-Sessions: ${SESSIONS_DIR}
+Sessions: ${SESSIONS_DIR} (tmp, locks)
+Records:  ${RECORDS_DIR}/<sessionId>/ (clean: actions.jsonl + playwright.spec.js)
 `);
   }
 }
