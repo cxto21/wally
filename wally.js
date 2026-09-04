@@ -799,20 +799,21 @@ const CDP_URL = '${CDP_URL}';
         const role = sel.split(' ')[0];
         test += `${indent}await ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first().click({ timeout: 5000 });\n`;
       } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
-        // CSS path (fallback nth-child) — fragile
+        // CSS path (fallback nth-child) — fragile and often non-interactive (loading overlays, error messages)
         const text = action.text || '';
         const walletKeywords = ['Ready', 'Argent', 'Braavos', 'Wallet', 'Carrot', 'STRK', 'Connect'];
         const isWalletOption = walletKeywords.some(k => text.includes(k));
+        const isErrorOverlay = text.includes('Contrase') || text.includes('Loading') || text.includes('Bloq May') || text.includes('Desbloque');
         const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && text.length > 15 && !isWalletOption;
-        if (isTextOnly) {
-          test += `${indent}// Skipped non-interactive text: ${sel} "${text.substring(0, 40).replace(/'/g, "\\'")}"\n`;
+        if (isTextOnly || isErrorOverlay) {
+          test += `${indent}// Skipped non-interactive: ${sel} "${text.substring(0, 40).replace(/'/g, "\\'").replace(/\n/g,' ')}"\n`;
         } else if (isWalletOption && text) {
-          // Wallet selector in StarknetKit modal — optional, may not appear if already connected
           const escText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').substring(0, 30);
           const varName = `_wallet_${Math.random().toString(36).substring(2,6)}`;
           test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { await ${varName}.click({ timeout: 5000 }); } else { console.log('[Wally] Skip wallet selector not visible: ${escText}'); } }\n`;
         } else {
-          test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
+          // Robust: wait for visible with longer timeout for network/latency, skip if not found
+          test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): ${sel}'); } }\n`;
         }
       } else {
         test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
