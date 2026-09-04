@@ -1058,9 +1058,9 @@ Wally — Interactive
   4) status  — daemon status
   5) stop    — stop daemon
 `);
-  const ans = await ask('Select [1-5]: ');
-  const c = ans.trim();
-  if (c === '1' || c.toLowerCase() === 'record') {
+  const ans = await ask('Select [1-5] (just number, e.g. 1): ');
+  const c = ans.trim().toLowerCase().replace(/^wally\s+/, '').trim();
+  if (c === '1' || c === 'record' || c.startsWith('1 ')) {
     const url = await ask('URL to record [https://app.avnu.fi/en]: ');
     const profile = await ask('Chrome profile [Profile 9]: ');
     const args = ['start'];
@@ -1068,18 +1068,21 @@ Wally — Interactive
     else { args.push('--url', 'https://app.avnu.fi/en'); }
     if (profile.trim()) { args.push('--profile', profile.trim()); }
     await cmdDaemon(args);
-  } else if (c === '2' || c.toLowerCase() === 'play') {
+  } else if (c === '2' || c === 'play' || c.startsWith('2 ')) {
     await cmdPlay([]);
-  } else if (c === '3' || c.toLowerCase() === 'list') {
+  } else if (c === '3' || c === 'list' || c.startsWith('3 ')) {
     const records = fs.existsSync(RECORDS_DIR) ? fs.readdirSync(RECORDS_DIR).filter(d => fs.statSync(path.join(RECORDS_DIR,d)).isDirectory()) : [];
     console.log('\nRecords in', RECORDS_DIR);
     records.forEach(r => console.log('  -', r));
-  } else if (c === '4' || c.toLowerCase() === 'status') {
+  } else if (c === '4' || c === 'status' || c.startsWith('4 ')) {
     await cmdDaemon(['status']);
-  } else if (c === '5' || c.toLowerCase() === 'stop') {
+  } else if (c === '5' || c === 'stop' || c.startsWith('5 ')) {
     await cmdDaemon(['stop']);
+  } else if (/^\d+$/.test(c)) {
+    // User typed just a number outside range? treat as play selection
+    await cmdPlay([c]);
   } else {
-    console.log('Unknown option');
+    console.log('Unknown option — type just 1, 2, 3, 4 or 5');
   }
 }
 
@@ -1091,6 +1094,12 @@ async function main() {
   fs.mkdirSync(WALLY_DIR, { recursive: true });
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   fs.mkdirSync(RECORDS_DIR, { recursive: true });
+
+  // wally 1 / wally 2 as shortcut for wally play 1 / 2
+  if (/^\d+$/.test(cmd)) {
+    await cmdPlay([cmd]);
+    return;
+  }
 
   switch (cmd) {
     case 'snap': await cmdSnap(args.slice(1)); break;
