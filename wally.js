@@ -806,7 +806,7 @@ const CDP_URL = '${CDP_URL}';
           test += `${indent}{ const ${v} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first(); if (await ${v}.isVisible().catch(()=>false)) await ${v}.click({ timeout: 5000 }); else console.log('[Wally] Skip optional button not visible: ${text}'); }\n`;
         } else {
           const v2 = `_btn${Math.random().toString(36).substring(2,4)}`;
-          test += `${indent}{ const ${v2} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}/i }).first(); if (await ${v2}.isVisible().catch(()=>false)) { try { await ${v2}.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split('\\n')[0]); } } else { console.log('[Wally] Skip button not visible: ${text}'); } }\n`;
+          test += `${indent}{ const ${v2} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}/i }).first(); if (await ${v2}.isVisible().catch(()=>false)) { try { await ${v2}.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip button not visible: ${text}'); } }\n`;
         }
       } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
         // CSS path (fallback nth-child) — fragile and often non-interactive (loading overlays, error messages)
@@ -820,7 +820,7 @@ const CDP_URL = '${CDP_URL}';
         } else if (isWalletOption && text) {
           const escText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').substring(0, 30);
           const varName = `_wallet_${Math.random().toString(36).substring(2,6)}`;
-          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { try { await ${varName}.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Wallet click failed (continuing):', e.message.split('\\n')[0]); } } else { console.log('[Wally] Skip wallet selector not visible: ${escText}'); } }\n`;
+          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { try { await ${varName}.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Wallet click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip wallet selector not visible: ${escText}'); } }\n`;
         } else {
           // Robust: wait for visible with longer timeout for network/latency, skip if not found
           test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): ${sel}'); } }\n`;
