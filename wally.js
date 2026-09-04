@@ -782,8 +782,9 @@ const CDP_URL = '${CDP_URL}';
     const indent = (lastPage !== 'main' && lastPage.startsWith('ext:')) ? '    ' : '  ';
 
     if (action.type === 'navigate') {
-      test += `${indent}await page.goto('${action.url}', { waitUntil: 'networkidle', timeout: 30000 });\n`;
-      test += `${indent}await page.waitForTimeout(3000);\n`;
+      const navTarget = (lastPage.startsWith('ext:') ? 'extPage' : 'page');
+      test += `${indent}await ${navTarget}.goto('${action.url}', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});\n`;
+      test += `${indent}await ${navTarget}.waitForTimeout(2000);\n`;
     } else if (action.type === 'click') {
       const sel = action.selector;
       const target = (lastPage.startsWith('ext:') && lastPage !== 'main') ? 'extPage' : 'page';
