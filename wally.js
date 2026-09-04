@@ -788,7 +788,10 @@ const CDP_URL = '${CDP_URL}';
     } else if (action.type === 'click') {
       const sel = action.selector;
       const target = (lastPage.startsWith('ext:') && lastPage !== 'main') ? 'extPage' : 'page';
-      if (sel.startsWith('[data-testid=') || sel.startsWith('#') || sel.startsWith('[aria-label=')) {
+      // Password inputs are optional (wallet may already be unlocked)
+      if (sel.includes('password')) {
+        test += `${indent}{ const _pw = ${target}.locator('${sel}').first(); if (await _pw.isVisible().catch(()=>false)) await _pw.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip password click not visible'); }\n`;
+      } else if (sel.startsWith('[data-testid=') || sel.startsWith('#') || sel.startsWith('[aria-label=')) {
         test += `${indent}await ${target}.locator('${sel}').click({ force: true, timeout: 5000 });\n`;
       } else if (sel.startsWith('button "') || sel.startsWith('link "')) {
         // Text-based selector
@@ -818,7 +821,12 @@ const CDP_URL = '${CDP_URL}';
     } else if (action.type === 'fill') {
       const escaped = (action.value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       const target = (lastPage.startsWith('ext:') && lastPage !== 'main') ? 'extPage' : 'page';
-      test += `${indent}await ${target}.locator('${action.selector}').fill('${escaped}');\n`;
+      // Password fills are optional — wallet may already be unlocked
+      if (action.selector.includes('password')) {
+        test += `${indent}{ const _pw = ${target}.locator('${action.selector}').first(); if (await _pw.isVisible().catch(()=>false)) { await _pw.fill('${escaped}'); } else { console.log('[Wally] Skip fill not visible: ${action.selector}'); } }\n`;
+      } else {
+        test += `${indent}await ${target}.locator('${action.selector}').fill('${escaped}');\n`;
+      }
       test += `${indent}await page.waitForTimeout(500);\n`;
     } else if (action.type === 'wallet_connect') {
       const walletType = action.walletType || 'unknown';
