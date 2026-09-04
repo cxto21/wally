@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 
 const CDP_URL = 'http://127.0.0.1:9222';
-const WALLY_DIR = '/tmp/opencode/wally';
+const WALLY_DIR = path.join(__dirname, '.records');
 const SESSIONS_DIR = path.join(WALLY_DIR, 'sessions');
 const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || 'MMOR4MORA!';
 const CHROME_DATA_DIR = '/tmp/opencode/chrome-cdp';

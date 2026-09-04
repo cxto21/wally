@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# Wally sessions
-/tmp/wally/
+# Wally recordings (keep gitkeep)
+.records/*
+!.records/.gitkeep
 
 # Environment
 .env
