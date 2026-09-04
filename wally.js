@@ -701,16 +701,19 @@ const CDP_URL = '${CDP_URL}';
       test += `\n  // Switch to extension page (any chrome-extension:// URL)\n`;
       test += `  extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
       test += `  if (!extPage) {\n`;
-      test += `    // Wait for extension to open\n`;
+      test += `    // Wait for extension to open (triggered by prior page click)\n`;
       test += `    for (let i = 0; i < 15; i++) {\n`;
       test += `      extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
       test += `      if (extPage) break;\n`;
+      test += `      console.log('[Wally] Waiting for extension popup...', i);\n`;
       test += `      await page.waitForTimeout(1000);\n`;
       test += `    }\n`;
       test += `  }\n`;
       test += `  if (extPage) {\n`;
+      test += `    await extPage.bringToFront().catch(() => {});\n`;
       test += `    await extPage.waitForLoadState('domcontentloaded').catch(() => {});\n`;
-      test += `    await extPage.waitForTimeout(2000);\n`;
+      test += `    await extPage.waitForTimeout(1500);\n`;
+      test += `    console.log('[Wally] Extension visible:', extPage.url());\n`;
       lastPage = actionPage;
     } else if (actionPage !== lastPage && actionPage === 'main') {
       test += `\n    // Switch back to main page\n`;
@@ -769,6 +772,14 @@ const CDP_URL = '${CDP_URL}';
   }
 
   test += `  console.log('[Wally] Replay done, final URL:', page.url());\n`;
+  test += `  if (extPage) {\n`;
+  test += `    console.log('[Wally] Extension final URL:', extPage.url());\n`;
+  test += `    await extPage.bringToFront().catch(() => {});\n`;
+  test += `  } else {\n`;
+  test += `    await page.bringToFront().catch(() => {});\n`;
+  test += `  }\n`;
+  test += `  console.log('[Wally] Keeping browser open 10s for visual check...');\n`;
+  test += `  await page.waitForTimeout(10000);\n`;
   test += `  await browser.close();\n`;
   test += `})().catch(e => { console.error(e); process.exit(1); });\n`;
 
