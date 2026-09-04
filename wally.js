@@ -737,10 +737,13 @@ const CDP_URL = '${CDP_URL}';
         const role = sel.split(' ')[0];
         test += `${indent}await ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first().click({ timeout: 5000 });\n`;
       } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
-        // CSS path (fallback nth-child) — fragile
-        const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && (action.text || '').length > 15;
+        // CSS path (fallback nth-child) — fragile, skip only pure informational text (not wallet options)
+        const text = action.text || '';
+        const walletKeywords = ['Ready', 'Argent', 'Braavos', 'Wallet', 'Carrot', 'STRK', 'Connect'];
+        const isWalletOption = walletKeywords.some(k => text.includes(k));
+        const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && text.length > 15 && !isWalletOption;
         if (isTextOnly) {
-          test += `${indent}// Skipped non-interactive click: ${sel} "${(action.text || '').substring(0, 40).replace(/'/g, "\\'")}"\n`;
+          test += `${indent}// Skipped non-interactive text: ${sel} "${text.substring(0, 40).replace(/'/g, "\\'")}"\n`;
         } else {
           test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
         }
