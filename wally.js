@@ -620,14 +620,14 @@ async function cmdRecord(args) {
 }
 
 async function cmdExport(args) {
-  // Support both 'recording' and 'daemon-*' session dirs
+  // Support both 'recording' and 'record-*' / 'daemon-*' session dirs
   let sessionDir = path.join(SESSIONS_DIR, 'recording');
   let actionsFile = path.join(sessionDir, 'actions.jsonl');
 
-  // If no recording session, find latest daemon session
+  // If no recording session, find latest record session
   if (!fs.existsSync(actionsFile) || fs.statSync(actionsFile).size === 0) {
     const daemonSessions = fs.readdirSync(SESSIONS_DIR)
-      .filter(d => d.startsWith('daemon-'))
+      .filter(d => d.startsWith('record-') || d.startsWith('daemon-'))
       .sort()
       .reverse();
     if (daemonSessions.length > 0) {
