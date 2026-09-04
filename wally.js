@@ -1073,25 +1073,8 @@ async function cmdPlay(args) {
     const full = path.join(RECORDS_DIR, d);
     return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'playwright.spec.js'));
   }) : [];
-  // Filter out tiny/incomplete records (<5 actions) and sort by completeness then recency
-  const records = allRecords.filter(id => {
-    try {
-      const lines = fs.readFileSync(path.join(RECORDS_DIR, id, 'actions.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
-      return lines.length >= 5;
-    } catch { return false; }
-  }).sort((a, b) => {
-    // Sort by actions count desc, then by name (timestamp) desc
-    try {
-      const aLines = fs.readFileSync(path.join(RECORDS_DIR, a, 'actions.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length;
-      const bLines = fs.readFileSync(path.join(RECORDS_DIR, b, 'actions.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length;
-      if (aLines !== bLines) return bLines - aLines;
-    } catch {}
-    return b.localeCompare(a);
-  });
-  if (records.length === 0 && allRecords.length > 0) {
-    console.log('[Wally] All records are tiny (<5 actions), showing all anyway');
-    records.push(...allRecords.sort().reverse());
-  }
+  // Show all, most recent first (reliable, no filtering)
+  const records = allRecords.sort().reverse();
 
   if (records.length === 0) {
     console.log('[Wally] No records with playwright.spec.js in', RECORDS_DIR);
