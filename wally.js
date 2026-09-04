@@ -676,25 +676,19 @@ async function cmdExport(args) {
  * Actions: ${actions.length}
  * Pages: ${Array.from(pages.keys()).join(', ')}
  * Extension: ${detectedExtId ? 'detected (' + detectedExtId + ')' : 'none detected'}
+ * Run: node playwright.spec.js  (needs Chrome with --remote-debugging-port=9222 and Profile 9)
  */
 const { chromium } = require('playwright');
+const assert = require('assert');
 
 const CDP_URL = '${CDP_URL}';
 
-describe('DVX Workflow', () => {
-  let browser, context, page;
-
-  beforeAll(async () => {
-    browser = await chromium.connectOverCDP(CDP_URL);
-    const contexts = browser.contexts();
-    context = contexts.find(c => c.pages().length > 0) || contexts[0];
-    // Find main page (not an extension)
-    page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
-  });
-
-  afterAll(async () => { try { browser.close(); } catch {} });
-
-  it('replays recorded workflow', async () => {
+(async () => {
+  const browser = await chromium.connectOverCDP(CDP_URL);
+  const contexts = browser.contexts();
+  const context = contexts.find(c => c.pages().length > 0) || contexts[0];
+  let page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
+  let extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
 `;
 
   let lastPage = 'main';
@@ -704,19 +698,19 @@ describe('DVX Workflow', () => {
 
     // If switching to extension page, add page switch logic
     if (actionPage !== lastPage && actionPage.startsWith('ext:')) {
-      test += `\n    // Switch to extension page (any chrome-extension:// URL)\n`;
-      test += `    let extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
-      test += `    if (!extPage) {\n`;
-      test += `      // Wait for extension to open\n`;
-      test += `      for (let i = 0; i < 15; i++) {\n`;
-      test += `        extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
-      test += `        if (extPage) break;\n`;
-      test += `        await page.waitForTimeout(1000);\n`;
-      test += `      }\n`;
+      test += `\n  // Switch to extension page (any chrome-extension:// URL)\n`;
+      test += `  extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
+      test += `  if (!extPage) {\n`;
+      test += `    // Wait for extension to open\n`;
+      test += `    for (let i = 0; i < 15; i++) {\n`;
+      test += `      extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
+      test += `      if (extPage) break;\n`;
+      test += `      await page.waitForTimeout(1000);\n`;
       test += `    }\n`;
-      test += `    if (extPage) {\n`;
-      test += `      await extPage.waitForLoadState('domcontentloaded').catch(() => {});\n`;
-      test += `      await extPage.waitForTimeout(2000);\n`;
+      test += `  }\n`;
+      test += `  if (extPage) {\n`;
+      test += `    await extPage.waitForLoadState('domcontentloaded').catch(() => {});\n`;
+      test += `    await extPage.waitForTimeout(2000);\n`;
       lastPage = actionPage;
     } else if (actionPage !== lastPage && actionPage === 'main') {
       test += `\n    // Switch back to main page\n`;
@@ -724,7 +718,7 @@ describe('DVX Workflow', () => {
       lastPage = actionPage;
     }
 
-    const indent = (lastPage !== 'main' && lastPage.startsWith('ext:')) ? '      ' : '    ';
+    const indent = (lastPage !== 'main' && lastPage.startsWith('ext:')) ? '    ' : '  ';
 
     if (action.type === 'navigate') {
       test += `${indent}await page.goto('${action.url}', { waitUntil: 'networkidle', timeout: 30000 });\n`;
@@ -757,24 +751,25 @@ describe('DVX Workflow', () => {
     // Close extension block if next action is on main page
     const nextAction = actions[actions.indexOf(action) + 1];
     if (nextAction && lastPage.startsWith('ext:') && (nextAction.page || 'main') === 'main') {
-      test += `    }\n\n`;
+      test += `  }\n\n`;
     }
   }
 
   // Close any open extension block
   if (lastPage.startsWith('ext:')) {
-    test += `    }\n`;
+    test += `  }\n`;
   }
 
-  test += `    expect(page.url()).toBeDefined();\n`;
-  test += `  });\n});\n`;
+  test += `  console.log('[Wally] Replay done, final URL:', page.url());\n`;
+  test += `  await browser.close();\n`;
+  test += `})().catch(e => { console.error(e); process.exit(1); });\n`;
 
   const outputPath = path.resolve(outputFile);
   fs.writeFileSync(outputPath, test);
   console.log(`[Wally] Exported ${actions.length} actions → ${outputPath}`);
   console.log(`[Wally] Pages: ${Array.from(pages.keys()).join(', ')}`);
   if (detectedExtId) console.log(`[Wally] Extension detected: ${detectedExtId}`);
-  console.log(`[Wally] Run: npx playwright test ${outputPath}`);
+  console.log(`[Wally] Run: node ${outputPath}`);
 
   // Also copy to clean .records/<sessionId>/ for visibility
   try {
