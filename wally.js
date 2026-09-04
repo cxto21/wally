@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Wally — DVX Workflow Recorder + Snapshot Tool
  *
@@ -993,6 +994,95 @@ function getArg(args, name) {
   return idx !== -1 ? args[idx + 1] : null;
 }
 
+async function cmdPlay(args) {
+  const records = fs.existsSync(RECORDS_DIR) ? fs.readdirSync(RECORDS_DIR).filter(d => {
+    const full = path.join(RECORDS_DIR, d);
+    return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'playwright.spec.js'));
+  }).sort().reverse() : [];
+
+  if (records.length === 0) {
+    console.log('[Wally] No records with playwright.spec.js in', RECORDS_DIR);
+    console.log('Run: wally record  or  node wally.js daemon start --url https://...');
+    return;
+  }
+
+  console.log('\n[Wally Play] Available records:\n');
+  records.forEach((id, idx) => {
+    const full = path.join(RECORDS_DIR, id);
+    const actionsFile = path.join(full, 'actions.jsonl');
+    let info = '';
+    try {
+      const lines = fs.readFileSync(actionsFile, 'utf8').trim().split('\n').filter(Boolean);
+      const first = lines.length ? JSON.parse(lines[0]) : {};
+      const last = lines.length ? JSON.parse(lines[lines.length-1]) : {};
+      const pages = [...new Set(lines.map(l => { try { return JSON.parse(l).page || 'main'; } catch { return 'main'; } }))].join(', ');
+      info = `${lines.length} actions | ${pages} | ${first.ts ? new Date(first.ts).toLocaleString() : ''}`;
+    } catch {}
+    console.log(`  ${idx + 1}) ${id}  — ${info}`);
+  });
+
+  const sel = args[0] && /^\d+$/.test(args[0]) ? args[0] : null;
+  let choice;
+  if (sel) {
+    choice = parseInt(sel, 10);
+  } else {
+    const ans = await ask(`\nSelect record to play [1-${records.length}]: `);
+    choice = parseInt(ans.trim(), 10);
+  }
+
+  if (!choice || choice < 1 || choice > records.length) {
+    console.log('[Wally] Invalid selection');
+    return;
+  }
+
+  const id = records[choice - 1];
+  const spec = path.join(RECORDS_DIR, id, 'playwright.spec.js');
+  console.log(`\n[Wally] Playing ${id} → ${spec}\n`);
+  const { spawn } = require('child_process');
+  const proc = spawn('node', [spec], { stdio: 'inherit', cwd: path.dirname(spec) });
+  await new Promise((res) => proc.on('close', res));
+}
+
+function ask(question) {
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans); }));
+}
+
+async function cmdInteractive() {
+  console.log(`
+Wally — Interactive
+
+  1) record  — start recording (daemon)
+  2) play    — replay a saved record
+  3) list    — show records
+  4) status  — daemon status
+  5) stop    — stop daemon
+`);
+  const ans = await ask('Select [1-5]: ');
+  const c = ans.trim();
+  if (c === '1' || c.toLowerCase() === 'record') {
+    const url = await ask('URL to record [https://app.avnu.fi/en]: ');
+    const profile = await ask('Chrome profile [Profile 9]: ');
+    const args = ['start'];
+    if (url.trim()) { args.push('--url', url.trim()); }
+    else { args.push('--url', 'https://app.avnu.fi/en'); }
+    if (profile.trim()) { args.push('--profile', profile.trim()); }
+    await cmdDaemon(args);
+  } else if (c === '2' || c.toLowerCase() === 'play') {
+    await cmdPlay([]);
+  } else if (c === '3' || c.toLowerCase() === 'list') {
+    const records = fs.existsSync(RECORDS_DIR) ? fs.readdirSync(RECORDS_DIR).filter(d => fs.statSync(path.join(RECORDS_DIR,d)).isDirectory()) : [];
+    console.log('\nRecords in', RECORDS_DIR);
+    records.forEach(r => console.log('  -', r));
+  } else if (c === '4' || c.toLowerCase() === 'status') {
+    await cmdDaemon(['status']);
+  } else if (c === '5' || c.toLowerCase() === 'stop') {
+    await cmdDaemon(['stop']);
+  } else {
+    console.log('Unknown option');
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const cmd = args[0];
@@ -1004,24 +1094,49 @@ async function main() {
 
   switch (cmd) {
     case 'snap': await cmdSnap(args.slice(1)); break;
-    case 'record': await cmdRecord(args.slice(1)); break;
+    case 'record': {
+      // wally record  → interactive daemon start, wally record start/stop → legacy
+      if (!sub || sub === 'start' && args.length === 1) {
+        // interactive record
+        const url = await ask('URL to record [https://app.avnu.fi/en]: ');
+        const profileAns = await ask('Chrome profile [Profile 9]: ');
+        const dArgs = ['start', '--url', (url.trim() || 'https://app.avnu.fi/en')];
+        if (profileAns.trim()) dArgs.push('--profile', profileAns.trim());
+        await cmdDaemon(dArgs);
+      } else {
+        await cmdRecord(args.slice(1));
+      }
+      break;
+    }
+    case 'play': await cmdPlay(args.slice(1)); break;
+    case 'list': {
+      const records = fs.existsSync(RECORDS_DIR) ? fs.readdirSync(RECORDS_DIR).filter(d => fs.statSync(path.join(RECORDS_DIR,d)).isDirectory()).sort().reverse() : [];
+      console.log(`Records in ${RECORDS_DIR}:`);
+      records.forEach(r => console.log(' ', r));
+      break;
+    }
     case 'export': await cmdExport(args.slice(1)); break;
     case 'wallet': await cmdWallet(args.slice(1)); break;
     case 'daemon': await cmdDaemon(args.slice(1)); break;
+    case undefined:
+    case 'interactive':
+      await cmdInteractive();
+      break;
     default:
       console.log(`
 Wally — DVX Workflow Recorder
 Built on libretto MIT primitives (saffron-health/libretto)
 
 Commands:
-  node wally.js snap [--url <url>]          Snapshot current page (or navigate + snapshot)
-  node wally.js record start               Start recording clicks + navigations
-  node wally.js record stop                Stop recording, take final snapshot
-  node wally.js export [--output <file>]   Export recorded actions → Playwright test
-  node wally.js wallet                     Connect wallet via starknet.enable() + handle Ready extension
-  node wally.js daemon start               Start background multi-page recording
-  node wally.js daemon stop                Stop daemon + show summary
-  node wally.js daemon status              Show active pages + action counts
+  wally                          Interactive menu (record / play)
+  wally record                   Start recording (asks URL/profile)
+  wally play [N]                 Replay saved record (interactive selector)
+  wally list                     List records in .records/
+  wally snap [--url <url>]       Snapshot current page
+  wally export [--output <file>] Export recorded actions → Playwright test
+  wally daemon start [--url <url>] [--profile <name>]  Background recording
+  wally daemon stop              Stop daemon
+  wally daemon status            Show active pages + action counts
 
 Options:
   --profile <name>  Chrome profile (default: "Profile 9")
