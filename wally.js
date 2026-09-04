@@ -804,9 +804,10 @@ const CDP_URL = '${CDP_URL}';
         if (isTextOnly) {
           test += `${indent}// Skipped non-interactive text: ${sel} "${text.substring(0, 40).replace(/'/g, "\\'")}"\n`;
         } else if (isWalletOption && text) {
-          // Wallet selector in StarknetKit modal — use text locator, more robust than CSS path
+          // Wallet selector in StarknetKit modal — optional, may not appear if already connected
           const escText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').substring(0, 30);
-          test += `${indent}await ${target}.getByText(/${escText}/i).first().click({ timeout: 5000 });\n`;
+          const varName = `_wallet_${Math.random().toString(36).substring(2,6)}`;
+          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { await ${varName}.click({ timeout: 5000 }); } else { console.log('[Wally] Skip wallet selector not visible: ${escText}'); } }\n`;
         } else {
           test += `${indent}await ${target}.locator('${sel}').first().click({ force: true, timeout: 5000 });\n`;
         }
