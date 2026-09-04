@@ -257,16 +257,27 @@ async function ensureCDP(profileName, url) {
   console.log(`[Wally] Starting Chrome with profile "${profile}"...`);
   launchChrome(profile, url);
 
-  // Wait for CDP to become available
-  for (let i = 0; i < 20; i++) {
+  // Wait for CDP to become available (Profile 9 is heavy, needs up to 30s)
+  for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 500));
     const check = await checkCDP();
     if (check.ok) {
       console.log('[Wally] Chrome CDP ready.');
+      // Give it a moment to settle before daemon attaches
+      await new Promise(r => setTimeout(r, 1500));
       return true;
     }
+    if (i % 10 === 9) console.log(`[Wally] Waiting for CDP... ${Math.round((i+1)*0.5)}s`);
   }
-  console.log('[Wally] Chrome started but CDP not ready. Try again in a few seconds.');
+  console.log('[Wally] Chrome started but CDP not ready after 30s. Retrying once...');
+  // One more try after a short pause
+  await new Promise(r => setTimeout(r, 2000));
+  const finalCheck = await checkCDP();
+  if (finalCheck.ok) {
+    console.log('[Wally] Chrome CDP ready (retry).');
+    return true;
+  }
+  console.log('[Wally] Chrome started but CDP still not ready. Please run wally record again.');
   return false;
 }
 
@@ -803,10 +814,10 @@ const CDP_URL = '${CDP_URL}';
         const isOptional = /^(OK|Close|Cancel|Dismiss)$/i.test(text.trim());
         if (isOptional) {
           const v = `_btn${Math.random().toString(36).substring(2,4)}`;
-          test += `${indent}{ const ${v} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first(); if (await ${v}.isVisible().catch(()=>false)) await ${v}.click({ timeout: 5000 }); else console.log('[Wally] Skip optional button not visible: ${text}'); }\n`;
+          test += `${indent}{ const ${v} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first(); if (await ${v}.isVisible().catch(()=>false)) await ${v}.click({ timeout: 5000 }); else console.log('[Wally] Skip optional button not visible: ' + ${JSON.stringify(text)}); }\n`;
         } else {
           const v2 = `_btn${Math.random().toString(36).substring(2,4)}`;
-          test += `${indent}{ const ${v2} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}/i }).first(); if (await ${v2}.isVisible().catch(()=>false)) { try { await ${v2}.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip button not visible: ${text}'); } }\n`;
+          test += `${indent}{ const ${v2} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}/i }).first(); if (await ${v2}.isVisible().catch(()=>false)) { try { await ${v2}.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip button not visible: ' + ${JSON.stringify(text)}); } }\n`;
         }
       } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
         // CSS path (fallback nth-child) — fragile and often non-interactive (loading overlays, error messages)
@@ -820,7 +831,7 @@ const CDP_URL = '${CDP_URL}';
         } else if (isWalletOption && text) {
           const escText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').substring(0, 30);
           const varName = `_wallet_${Math.random().toString(36).substring(2,6)}`;
-          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { try { await ${varName}.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Wallet click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip wallet selector not visible: ${escText}'); } }\n`;
+          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { try { await ${varName}.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Wallet click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip wallet selector not visible: ' + ${JSON.stringify(escText)}); } }\n`;
         } else {
           // Robust: wait for visible with longer timeout for network/latency, skip if not found
           test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): ${sel}'); } }\n`;
