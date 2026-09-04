@@ -270,14 +270,55 @@ async function ensureCDP(profileName, url) {
   return false;
 }
 
+let _rl = null;
+let _stdinLines = null;
+let _stdinIdx = 0;
+function getStdinLines() {
+  if (_stdinLines === null && !process.stdin.isTTY) {
+    try {
+      const data = require('fs').readFileSync(0, 'utf-8');
+      _stdinLines = data.split('\n');
+      // Keep as is, will handle \r
+      _stdinIdx = 0;
+      // If data was empty, set to empty array to avoid re-reading
+      if (_stdinLines.length === 1 && _stdinLines[0] === '') _stdinLines = [];
+    } catch { _stdinLines = []; }
+  }
+  return _stdinLines;
+}
+function getRL() {
+  if (!_rl || _rl.closed) {
+    _rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  }
+  return _rl;
+}
 function prompt(question) {
-  return new Promise((resolve) => {
+  const lines = getStdinLines();
+  if (lines !== null) {
     process.stdout.write(question);
-    process.stdin.setEncoding('utf8');
-    process.stdin.once('data', (data) => {
-      resolve(data.trim() || 'Y');
-    });
-  });
+    const ans = (lines[_stdinIdx++] || '').replace(/\r$/, '');
+    process.stdout.write(ans + '\n');
+    return Promise.resolve(ans.trim() || 'Y');
+  }
+  return new Promise((resolve) => getRL().question(question, ans => resolve(ans.trim() || 'Y')));
+}
+function ask(question) {
+  const lines = getStdinLines();
+  if (lines !== null) {
+    process.stdout.write(question);
+    const ans = (lines[_stdinIdx++] || '').replace(/\r$/, '');
+    process.stdout.write(ans + '\n');
+    return Promise.resolve(ans);
+  }
+  return new Promise(resolve => getRL().question(question, ans => resolve(ans)));
+}
+function closeRL() { try { if (_rl) _rl.close(); } catch {} _rl = null; }
+
+function normalizeUrl(input) {
+  const t = (input || '').trim();
+  if (!t) return 'https://app.avnu.fi/en';
+  if (/^https?:\/\//i.test(t)) return t;
+  return 'https://' + t.replace(/^\/+/, '');
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1043,11 +1084,6 @@ async function cmdPlay(args) {
   await new Promise((res) => proc.on('close', res));
 }
 
-function ask(question) {
-  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans); }));
-}
-
 async function cmdInteractive() {
   console.log(`
 Wally — Interactive
@@ -1063,9 +1099,7 @@ Wally — Interactive
   if (c === '1' || c === 'record' || c.startsWith('1 ')) {
     const url = await ask('URL to record [https://app.avnu.fi/en]: ');
     const profile = await ask('Chrome profile [Profile 9]: ');
-    const args = ['start'];
-    if (url.trim()) { args.push('--url', url.trim()); }
-    else { args.push('--url', 'https://app.avnu.fi/en'); }
+    const args = ['start', '--url', normalizeUrl(url)];
     if (profile.trim()) { args.push('--profile', profile.trim()); }
     await cmdDaemon(args);
   } else if (c === '2' || c === 'play' || c.startsWith('2 ')) {
@@ -1109,7 +1143,7 @@ async function main() {
         // interactive record
         const url = await ask('URL to record [https://app.avnu.fi/en]: ');
         const profileAns = await ask('Chrome profile [Profile 9]: ');
-        const dArgs = ['start', '--url', (url.trim() || 'https://app.avnu.fi/en')];
+        const dArgs = ['start', '--url', normalizeUrl(url)];
         if (profileAns.trim()) dArgs.push('--profile', profileAns.trim());
         await cmdDaemon(dArgs);
       } else {
@@ -1156,9 +1190,12 @@ Sessions: ${SESSIONS_DIR} (tmp, locks)
 Records:  ${RECORDS_DIR}/<sessionId>/ (clean: actions.jsonl + playwright.spec.js)
 `);
   }
+  // Close readline if not keeping daemon alive
+  if (!(cmd === 'daemon' && sub === 'start')) closeRL();
 }
 
 main().catch(err => {
+  closeRL();
   console.error(`[Wally] Error: ${err.message}`);
   process.exit(1);
 });
