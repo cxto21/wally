@@ -4,7 +4,35 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wally — Turn any workflow into a stable API</title>
-<meta name="description" content="Build, manage, and scale secure APIs from complex processes instantly with Wally's intelligent platform.">
+<meta name="description" content="Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.">
+<meta name="keywords" content="wally, browser automation, playwright, chrome cdp, extension recorder, har, workflow api, interaction recorder, chrome extension, testing">
+<meta name="author" content="Ignacio del Corro">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#0f1115">
+<link rel="canonical" href="https://cxto21.github.io/wally/">
+<!-- Open Graph -->
+<meta property="og:title" content="Wally — Turn any workflow into a stable API">
+<meta property="og:description" content="Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cxto21.github.io/wally/">
+<meta property="og:image" content="https://cxto21.github.io/wally/images/background.png">
+<meta property="og:site_name" content="Wally">
+<meta property="og:locale" content="en_US">
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Wally — Turn any workflow into a stable API">
+<meta name="twitter:description" content="Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.">
+<meta name="twitter:image" content="https://cxto21.github.io/wally/images/background.png">
+<!-- Discovery -->
+<link rel="sitemap" type="application/xml" href="/wally/sitemap.xml">
+<link rel="sitemap" type="application/xml" href="sitemap.xml">
+<link rel="alternate" type="text/markdown" href="/wally/llms.txt" title="Wally llms.txt">
+<link rel="alternate" type="text/markdown" href="llms.txt" title="Wally llms.txt">
+<link rel="alternate" type="text/plain" href="/wally/ai.txt" title="AI instructions">
+<link rel="alternate" type="text/plain" href="humans.txt" title="Humans">
+<link rel="author" href="humans.txt">
+<link rel="api-catalog" href="/wally/openapi.json">
+<link rel="api-catalog" href="openapi.json">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--mint:#B8F5D8;--mint-hover:#A3EDC9}
@@ -12,6 +40,7 @@ html{scroll-behavior:smooth}
 html,body{height:100%;overflow:hidden}
 body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;line-height:1.5;background:#0f1115;overflow:hidden}
 a{color:inherit;text-decoration:none}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 nav{position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:22px 40px}
 .logo{font-size:15px;font-weight:800;letter-spacing:0.28em;color:#fff}
 .nav-links{display:flex;align-items:center;gap:28px}
@@ -72,6 +101,52 @@ nav{position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:c
   .btn{width:100%}
 }
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "name": "Wally",
+      "url": "https://cxto21.github.io/wally/",
+      "logo": "https://cxto21.github.io/wally/images/background.png",
+      "sameAs": ["https://github.com/cxto21/wally"]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "Wally",
+      "description": "Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.",
+      "url": "https://cxto21.github.io/wally/",
+      "downloadUrl": "https://github.com/cxto21/wally",
+      "codeRepository": "https://github.com/cxto21/wally",
+      "author": {
+        "@type": "Person",
+        "name": "Ignacio del Corro"
+      },
+      "license": "https://github.com/cxto21/wally/blob/master/LICENSE",
+      "programmingLanguage": "JavaScript",
+      "operatingSystem": "Windows, macOS, Linux",
+      "applicationCategory": "DeveloperApplication",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "keywords": "browser automation, playwright, chrome cdp, har, extension recorder"
+    },
+    {
+      "@type": "WebSite",
+      "name": "Wally",
+      "url": "https://cxto21.github.io/wally/",
+      "inLanguage": "en",
+      "author": {
+        "@type": "Person",
+        "name": "Ignacio del Corro"
+      }
+    }
+  ]
+}
+</script>
 </head>
 <body>
 
@@ -88,6 +163,7 @@ nav{position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:c
   <div class="hero-inner">
     <div class="hero-text">
       <h1><span>Turn any workflow</span><span>into a stable API</span></h1>
+      <h2 class="sr-only">Browser and extension interaction recorder via Chrome CDP with Playwright export and HAR network capture</h2>
       <p>Build, manage, and scale secure APIs from complex processes instantly with Wally's intelligent platform.</p>
       <div class="hero-actions">
         <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener" class="btn btn-primary">Get Started Free</a>

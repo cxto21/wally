@@ -1,0 +1,17 @@
+# AI Access
+
+This site explicitly allows AI crawlers and agents.
+
+- Site: https://cxto21.github.io/wally/
+- GitHub: https://github.com/cxto21/wally
+- Description: Wally browser extension interaction recorder via Chrome CDP, Playwright export, HAR capture.
+- Author: Ignacio del Corro
+- License: BSD-3-Clause
+
+Allowed bots: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot, Bytespider, Applebot-Extended, and all compliant crawlers (see robots.txt).
+
+For structured data see:
+- https://cxto21.github.io/wally/sitemap.xml
+- https://cxto21.github.io/wally/llms.txt
+- https://cxto21.github.io/wally/openapi.json
+- https://cxto21.github.io/wally/humans.txt

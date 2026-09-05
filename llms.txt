@@ -1,0 +1,50 @@
+# Wally
+
+Wally is a browser and extension interaction recorder. It records browser actions and extension popups (any chrome-extension://) via Chrome CDP, captures clicks, fills and navigations, and exports standalone Playwright test scripts with HAR network capture.
+
+- Site: https://cxto21.github.io/wally/
+- GitHub: https://github.com/cxto21/wally
+- Author: Ignacio del Corro
+- License: BSD-3-Clause
+
+## What is Wally
+
+Wally attaches to Chrome via the Chrome DevTools Protocol (CDP) on port 9222. It records user interactions on any website and on extension popups/pages, then generates reproducible Playwright scripts. Optional HAR capture stores network traffic for debugging.
+
+## Key features
+
+- Record: clicks, fills, navigations, and chrome-extension:// popup interactions
+- Exec: run arbitrary Playwright JavaScript live against the attached Chrome (page, context, browser)
+- Network capture: CDP Network domain -> network.jsonl and HAR 1.2 (network.har)
+- Export: standalone Playwright test file from recorded actions
+- Daemon: background recording with status, stop and summary
+- Works with any website and any Chrome extension
+
+## Installation
+
+```bash
+npm install playwright
+node wally.js daemon start --url https://example.com
+node wally.js daemon start --profile "Profile 9" --url https://avnu.fi
+node wally.js daemon start --har
+node wally.js daemon status
+node wally.js daemon stop
+node wally.js export
+node wally.js exec "return await page.title()"
+node wally.js exec "await page.getByRole('button', {name: /Approve/}).click()"
+```
+
+## Links
+
+- GitHub: https://github.com/cxto21/wally
+- Docs: https://github.com/cxto21/wally#readme
+- Site: https://cxto21.github.io/wally/
+- Sitemap: https://cxto21.github.io/wally/sitemap.xml
+- API Catalog: https://cxto21.github.io/wally/openapi.json
+- Humans: https://cxto21.github.io/wally/humans.txt
+- Robots: https://cxto21.github.io/wally/robots.txt
+
+## Optional
+
+- ai.txt: https://cxto21.github.io/wally/ai.txt
+- MCP discovery: https://cxto21.github.io/wally/.well-known/mcp.json

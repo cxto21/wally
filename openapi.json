@@ -1,0 +1,53 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "Wally",
+    "description": "Wally browser and extension interaction recorder via Chrome CDP. Records clicks, fills, navigations and exports Playwright scripts with HAR network capture.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Ignacio del Corro",
+      "url": "https://github.com/cxto21/wally"
+    },
+    "license": {
+      "name": "BSD-3-Clause",
+      "url": "https://github.com/cxto21/wally/blob/master/LICENSE"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://cxto21.github.io/wally/",
+      "description": "GitHub Pages site"
+    },
+    {
+      "url": "https://github.com/cxto21/wally",
+      "description": "GitHub repository"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Wally landing page",
+        "description": "Returns the Wally hero page. Wally records browser and extension interactions via CDP and exports Playwright scripts.",
+        "operationId": "getLanding",
+        "responses": {
+          "200": {
+            "description": "HTML landing page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "wally",
+      "description": "Browser automation and recording"
+    }
+  ]
+}

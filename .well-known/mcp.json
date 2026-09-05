@@ -1,0 +1,12 @@
+{
+  "name": "wally",
+  "title": "Wally — Turn any workflow into a stable API",
+  "description": "Browser and extension interaction recorder via Chrome CDP. Captures clicks, fills, navigations and exports standalone Playwright scripts with HAR network capture.",
+  "url": "https://cxto21.github.io/wally/",
+  "repository": "https://github.com/cxto21/wally",
+  "author": "Ignacio del Corro",
+  "license": "BSD-3-Clause",
+  "version": "1.0.0",
+  "transport": "none",
+  "capabilities": ["record", "export", "exec", "har"]
+}
