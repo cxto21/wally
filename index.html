@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wally — Turn any workflow into a stable API</title>
+<meta name="description" content="Build, manage, and scale secure APIs from complex processes instantly with Wally's intelligent platform.">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--mint:#B8F5D8;--mint-hover:#A3EDC9}
+html{scroll-behavior:smooth}
+html,body{height:100%;overflow:hidden}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;line-height:1.5;background:#0f1115;overflow:hidden}
+a{color:inherit;text-decoration:none}
+nav{position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:22px 40px}
+.logo{font-size:15px;font-weight:800;letter-spacing:0.28em;color:#fff}
+.nav-links{display:flex;align-items:center;gap:28px}
+.nav-links a{font-size:13px;font-weight:500;color:rgba(255,255,255,0.85);letter-spacing:0.02em}
+.nav-links a:hover{color:#fff}
+.nav-cta{border:1px solid rgba(255,255,255,0.7);padding:8px 18px;border-radius:999px;font-size:13px;font-weight:600;color:#fff!important;transition:background .2s,border-color .2s}
+.nav-cta:hover{background:rgba(255,255,255,0.12);border-color:#fff}
+.hero{position:relative;height:100vh;height:100dvh;min-height:100vh;display:flex;align-items:center;padding:90px 40px 60px;background:
+  linear-gradient(rgba(0,0,0,0.15), rgba(0,0,0,0.35)),
+  url("images/background.png") 68% 32% / cover no-repeat;
+  overflow:hidden}
+.hero-inner{width:100%;max-width:1280px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:40px}
+.hero-text{max-width:560px;flex-shrink:0}
+.hero-text h1{font-size:52px;font-weight:800;line-height:1.08;color:#fff;letter-spacing:-0.03em;text-shadow:0 2px 24px rgba(0,0,0,0.35)}
+.hero-text h1 span{display:block}
+.hero-text p{margin-top:18px;font-size:16px;line-height:1.6;color:rgba(255,255,255,0.88);max-width:500px}
+.hero-actions{margin-top:32px;display:flex;gap:14px;flex-wrap:wrap}
+.btn{appearance:none;border:none;cursor:pointer;font-size:14px;font-weight:600;padding:13px 24px;border-radius:999px;letter-spacing:0.01em;transition:transform .15s,background .2s,border-color .2s,opacity .2s;display:inline-flex;align-items:center;justify-content:center}
+.btn:active{transform:scale(0.98)}
+.btn-primary{background:var(--mint);color:#0f3d2e}
+.btn-primary:hover{background:var(--mint-hover)}
+.btn-outline{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,0.85)}
+.btn-outline:hover{background:rgba(255,255,255,0.1);border-color:#fff}
+.code-card{width:420px;flex-shrink:0;background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.18);border-radius:16px;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,0.35)}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08)}
+.card-dots{display:flex;gap:6px}
+.dot{width:10px;height:10px;border-radius:50%}
+.dot-r{background:#FF5F56}.dot-y{background:#FFBD2E}.dot-g{background:#27C93F}
+.card-title{font-size:11px;letter-spacing:0.08em;color:rgba(255,255,255,0.6);font-weight:600}
+.card-body{padding:16px 18px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12.5px;line-height:1.65;color:rgba(255,255,255,0.88)}
+.cmt{color:rgba(255,255,255,0.42)}
+.kw{color:#7EE8B5}.str{color:#B8F5D8}.fn{color:#fff}.prop{color:#9BE8FF}
+.card-sep{height:1px;background:rgba(255,255,255,0.08);margin:12px 0}
+.status-line{display:flex;align-items:center;gap:8px;font-size:11.5px;color:rgba(255,255,255,0.75)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#4ADE80;box-shadow:0 0 8px #4ADE80}
+.check{color:#4ADE80}
+.conn{font-size:11.5px;color:rgba(255,255,255,0.55);margin-top:4px}
+.conn strong{color:rgba(255,255,255,0.9);font-weight:600}
+
+@media(max-width:1024px){
+  .hero-inner{gap:28px}
+  .code-card{width:360px}
+  .hero-text h1{font-size:44px}
+}
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links a:not(.nav-cta){display:none}
+  .hero{padding:70px 20px 20px;background-position:58% 22%;align-items:center}
+  .hero-inner{flex-direction:column;align-items:stretch;gap:22px}
+  .hero-text{max-width:none}
+  .hero-text h1{font-size:32px}
+  .hero-text p{font-size:14px}
+  .code-card{width:100%;max-width:none}
+  .card-body{font-size:11.5px}
+}
+@media(max-width:380px){
+  .hero-text h1{font-size:32px}
+  .btn{width:100%}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">WALLY</div>
+  <div class="nav-links">
+    <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener">Docs</a>
+    <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener" class="nav-cta">Get Started</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-text">
+      <h1><span>Turn any workflow</span><span>into a stable API</span></h1>
+      <p>Build, manage, and scale secure APIs from complex processes instantly with Wally's intelligent platform.</p>
+      <div class="hero-actions">
+        <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener" class="btn btn-primary">Get Started Free</a>
+        <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener" class="btn btn-outline">View Docs</a>
+      </div>
+    </div>
+
+    <div class="code-card" aria-label="Code example">
+      <div class="card-header">
+        <div class="card-dots"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+        <span class="card-title">WALLY API INTEGRATIONS v1.2.0</span>
+      </div>
+      <div class="card-body">
+        <div><span class="cmt">// Wally API Integrations v1.2.0</span></div>
+        <div><span class="kw">import</span> { <span class="fn">Wally</span> } <span class="kw">from</span> <span class="str">"wally-core"</span></div>
+        <div>&nbsp;</div>
+        <div><span class="fn">wally</span>.<span class="prop">workflow</span>(<span class="str">"process_orders"</span>)</div>
+        <div>&nbsp;&nbsp;.<span class="prop">connect</span>(<span class="str">"Shopify"</span>, { <span class="prop">key</span>: <span class="fn">api_key</span> })</div>
+        <div>&nbsp;&nbsp;.<span class="prop">map</span>(<span class="str">"CustomerData"</span>, <span class="fn">processFields</span>)</div>
+        <div>&nbsp;&nbsp;.<span class="prop">sendTo</span>(<span class="str">"Stripe"</span>, { <span class="prop">action</span>: <span class="str">"Charge"</span> });</div>
+        <div class="card-sep"></div>
+        <div class="status-line"><span class="status-dot"></span> Status: Listening (Port 4000)</div>
+        <div class="conn">Connections: <strong>14 Services</strong></div>
+        <div class="conn"><span class="check">✓</span> Connected: Salesforce, Slack, Jira, Github, Twilio</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+
+</body>
+</html>

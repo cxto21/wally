@@ -1,7 +1,7 @@
 {
   "name": "wally",
   "version": "1.0.0",
-  "description": "AI-powered workflow recorder. Records browser actions via Chrome CDP and exports standalone Playwright test scripts.",
+  "description": "Browser extension interaction recorder. Records browser and extension actions via Chrome CDP and exports standalone Playwright test scripts.",
   "main": "wally.js",
   "bin": {
     "wally": "./wally.js"
@@ -20,10 +20,14 @@
     "playwright",
     "chrome-cdp",
     "workflow-recorder",
-    "testing"
+    "testing",
+    "extension",
+    "chrome-extension",
+    "har",
+    "network-capture"
   ],
-  "author": "Ownerz Team",
-  "license": "MIT",
+  "author": "Ignacio del Corro",
+  "license": "BSD-3-Clause",
   "dependencies": {
     "playwright": "^1.50.0"
   },

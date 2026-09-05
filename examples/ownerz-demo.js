@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * Example: Wally + Ownerz + Ready wallet
- * 
- * This script demonstrates the full end-to-end flow:
+ * Example: Wally + Extension interaction
+ *
+ * This script demonstrates extension interaction recording:
  * 1. Connect to Chrome via CDP
- * 2. Start recording
- * 3. Click CONNECT button
- * 4. Handle Ready extension popup
- * 5. Export to Playwright test
+ * 2. Take snapshot and interact with page (e.g. click CONNECT)
+ * 3. Detect and handle extension popup (password/unlock + approval)
+ * 4. Export to Playwright test
+ *
+ * Generic example — works with any chrome-extension:// popup, not wallet-only.
  */
 
 const { chromium } = require('playwright');
@@ -16,7 +17,7 @@ const { chromium } = require('playwright');
 const CDP_URL = 'http://127.0.0.1:9222';
 
 async function main() {
-  console.log('=== Wally + Ownerz Demo ===\n');
+  console.log('=== Wally + Extension Demo ===\n');
 
   // Connect to Chrome
   const browser = await chromium.connectOverCDP(CDP_URL);
@@ -126,12 +127,12 @@ async function main() {
     return window.starknet?.isConnected || window.ethereum?.selectedAddress || false;
   }).catch(() => false);
 
-  console.log('  Wallet connected:', isConnected);
+  console.log('  Connected:', isConnected);
   console.log('  Page URL:', page.url());
 
   console.log('\n=== Demo Complete ===');
   console.log('\nTo export this as a Playwright test, run:');
-  console.log('  node wally.js export --output ownerz-test.spec.js');
+  console.log('  node wally.js export --output extension-test.spec.js');
 
   browser.close();
 }
