@@ -593,7 +593,7 @@ async function cmdRecord(args) {
       }
     });
 
-    // Record wallet provider connect
+    // Record Starknet wallet connect
     await page.evaluate(() => {
       if (!window.__wally_ext_observed) {
         window.__wally_ext_observed = true;
@@ -932,7 +932,7 @@ async function cmdExt(args) {
   try {
     console.log('[Wally] Connected to Chrome via CDP');
 
-    // Check if any wallet provider is already connected
+    // Check if any wallet is already connected
     const extInfo = await page.evaluate(() => {
       // EVM wallets
       if (window.ethereum && window.ethereum.selectedAddress) {
@@ -950,9 +950,9 @@ async function cmdExt(args) {
     }).catch(() => ({ type: null, account: null, connected: false }));
 
     if (extInfo.connected) {
-      console.log(`[Wally] Wallet provider already connected (${extInfo.type}: ${extInfo.account})`);
+      console.log(`[Wally] Wallet already connected (${extInfo.type}: ${extInfo.account})`);
     } else {
-      console.log('[Wally] Attempting to connect wallet provider...');
+      console.log('[Wally] Attempting to connect wallet...');
 
       // Try to enable any available wallet
       const enabled = await page.evaluate(async () => {
@@ -1444,7 +1444,7 @@ Commands:
   wally list                     List records in .records/
   wally snap [--url <url>]       Snapshot current page
   wally export [--output <file>] [--from <dir>]  Export recorded actions → Playwright test
-  wally ext                      Detect and connect wallet providers (EVM/Starknet/Solana)
+  wally ext                      Connect wallet (EVM/Starknet/Solana)
   wally daemon start [--url <url>] [--profile <name>] [--har] [--har-output <path>]  Background recording
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
