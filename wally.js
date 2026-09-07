@@ -20,14 +20,19 @@
  *   node wally.js daemon status                 — show active pages + action counts
  *   node wally.js exec "<code>"                — execute Playwright JS live
  *   node wally.js daemon start --har            — record with network capture
+ *
+ *   --verbose                                    — enable debug logging (WALLY_VERBOSE=1)
  */
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
+const { execSync, spawn } = require('child_process');
 const { createLogger } = require('./lib/logger');
 const { validateFilePath, validateUrl } = require('./lib/validator');
 const { connectCDP, ensureCDP, CDP_URL, CHROME_DEFAULT_PROFILE } = require('./lib/cdp');
 const { generatePlaywrightTest } = require('./lib/generate-test');
+const { WallyDaemon } = require('./lib/daemon');
 
 const log = createLogger('wally');
 
@@ -64,6 +69,13 @@ const STATE_PROPS = [
   'pressed', 'focused', 'required', 'invalid', 'readonly',
 ];
 
+/**
+ * Convert a raw CDP accessibility node into a compact snapshot node.
+ * Extracts interesting attributes and state properties.
+ *
+ * @param {Object} node - Raw CDP accessibility tree node
+ * @returns {Object} Compact snapshot node with role, name, children, and state properties
+ */
 function toSnapNode(node) {
   const snap = { role: node.role, name: node.name || '' };
   if (node.children?.length) snap.children = node.children.map(toSnapNode);
@@ -76,7 +88,13 @@ function toSnapNode(node) {
   return snap;
 }
 
-// Build tree from flat nodes (getFullAXTree returns flat list)
+/**
+ * Build a hierarchical accessibility tree from a flat list of CDP nodes.
+ * Handles ignored nodes, parent-child relationships, and interesting attributes.
+ *
+ * @param {Array} nodes - Flat array of CDP Accessibility.getFullAXTree nodes
+ * @returns {Object} Root node of the hierarchical tree (with children)
+ */
 function buildAXTree(nodes) {
   const byId = {};
   for (const n of nodes) {
@@ -115,6 +133,13 @@ function buildAXTree(nodes) {
   return build(roots[0].nodeId) || { role: 'empty', name: '' };
 }
 
+/**
+ * Render an accessibility tree node into human-readable indented lines.
+ *
+ * @param {Object} node - Tree node (role, name, children, state properties)
+ * @param {number} [depth=0] - Current indentation depth
+ * @returns {Array<string>} Array of formatted lines
+ */
 function renderTree(node, depth = 0) {
   const indent = '  '.repeat(depth);
   const attrs = [];
@@ -138,6 +163,13 @@ function renderTree(node, depth = 0) {
   return lines;
 }
 
+/**
+ * Capture an accessibility snapshot of a Playwright page via CDP.
+ * Returns structured tree + compact text representation.
+ *
+ * @param {import('playwright').Page} page - Playwright page to snapshot
+ * @returns {Promise<{ts: string, url: string, title: string, root: Object, compact: string}>}
+ */
 async function getSnapshot(page) {
   const cdp = await page.context().newCDPSession(page);
   try {
@@ -161,6 +193,11 @@ async function getSnapshot(page) {
 // CONNECT — reuse existing Chrome CDP
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Connect to Chrome via CDP using the shared connectCDP helper.
+ *
+ * @returns {Promise<{browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page}>}
+ */
 async function connect() {
   return connectCDP();
 }
@@ -168,10 +205,15 @@ async function connect() {
 let _rl = null;
 let _stdinLines = null;
 let _stdinIdx = 0;
+/**
+ * Read all lines from stdin (non-TTY). Caches result for subsequent calls.
+ *
+ * @returns {string[]|null} Array of input lines, or null if TTY
+ */
 function getStdinLines() {
   if (_stdinLines === null && !process.stdin.isTTY) {
     try {
-      const data = require('fs').readFileSync(0, 'utf-8');
+      const data = fs.readFileSync(0, 'utf-8');
       _stdinLines = data.split('\n');
       // Keep as is, will handle \r
       _stdinIdx = 0;
@@ -181,12 +223,24 @@ function getStdinLines() {
   }
   return _stdinLines;
 }
+/**
+ * Get or create a readline interface for interactive prompts.
+ *
+ * @returns {readline.Interface}
+ */
 function getRL() {
   if (!_rl || _rl.closed) {
-    _rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+    _rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   }
   return _rl;
 }
+/**
+ * Prompt user for input with a default "Y" if empty.
+ * Supports both TTY and piped stdin.
+ *
+ * @param {string} question - Prompt text
+ * @returns {Promise<string>} User's trimmed input or "Y" for empty
+ */
 function prompt(question) {
   const lines = getStdinLines();
   if (lines !== null) {
@@ -197,6 +251,13 @@ function prompt(question) {
   }
   return new Promise((resolve) => getRL().question(question, ans => resolve(ans.trim() || 'Y')));
 }
+/**
+ * Ask user a question and return raw input.
+ * Supports both TTY and piped stdin.
+ *
+ * @param {string} question - Prompt text
+ * @returns {Promise<string>} User's raw input
+ */
 function ask(question) {
   const lines = getStdinLines();
   if (lines !== null) {
@@ -207,8 +268,18 @@ function ask(question) {
   }
   return new Promise(resolve => getRL().question(question, ans => resolve(ans)));
 }
+/**
+ * Close the readline interface if open. Safe to call multiple times.
+ */
 function closeRL() { try { if (_rl) _rl.close(); } catch (e) { log.debug(`closeRL: ${e.message}`); } _rl = null; }
 
+/**
+ * Normalize a user-provided URL input. Adds https:// if missing, trims whitespace.
+ * Defaults to 'https://app.avnu.fi/en' if empty.
+ *
+ * @param {string} input - Raw URL string from user
+ * @returns {string} Normalized URL with protocol
+ */
 function normalizeUrl(input) {
   const t = (input || '').trim();
   if (!t) return 'https://app.avnu.fi/en';
@@ -220,6 +291,15 @@ function normalizeUrl(input) {
 // EXTENSION HANDLER — generic (works with any chrome-extension://)
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Detect and handle extension popups (password prompts, connection approval).
+ * Works with any chrome-extension:// page — not wallet-specific.
+ *
+ * @param {import('playwright').BrowserContext} context - Browser context
+ * @param {import('playwright').Page} page - Main page
+ * @param {string|null} actionsFile - Path to actions.jsonl for recording
+ * @returns {Promise<Array>} Array of recorded extension actions
+ */
 async function handleExtension(context, page, actionsFile) {
   // Find any extension page (chrome-extension://)
   const extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
@@ -289,6 +369,12 @@ const handleReadyExtension = handleExtension;
 // COMMANDS
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Execute the `snap` command — take an accessibility snapshot of a page.
+ *
+ * @param {string[]} args - CLI args (supports --url <url>)
+ * @returns {Promise<void>}
+ */
 async function cmdSnap(args) {
   const { browser, page } = await connect();
 
@@ -327,6 +413,12 @@ async function cmdSnap(args) {
   try { browser.close(); } catch (e) { log.debug(`cmdSnap browser.close: ${e.message}`); }
 }
 
+/**
+ * Execute the `record` command — start/stop single-page recording.
+ *
+ * @param {string[]} args - CLI args ('start' or 'stop')
+ * @returns {Promise<void>}
+ */
 async function cmdRecord(args) {
   const sub = args[0];
   const { browser, page } = await connect();
@@ -556,6 +648,12 @@ async function cmdRecord(args) {
   }
 }
 
+/**
+ * Execute the `export` command — convert recorded actions into a Playwright test script.
+ *
+ * @param {string[]} args - CLI args (supports --from <dir>, --output <file>)
+ * @returns {Promise<void>}
+ */
 async function cmdExport(args) {
   // Support --from <record-dir> to regenerate from .records/ (actions.jsonl)
   const fromDir = getArg(args, '--from');
@@ -661,6 +759,12 @@ async function cmdExport(args) {
   } catch (e) { log.debug(`cmdExport clean copy: ${e.message}`); }
 }
 
+/**
+ * Execute the `ext` command — connect wallet via extension popup.
+ *
+ * @param {string[]} args - CLI args
+ * @returns {Promise<void>}
+ */
 async function cmdExt(args) {
   const { browser, context, page } = await connect();
   const sessionDir = path.join(SESSIONS_DIR, 'ext');
@@ -763,6 +867,13 @@ async function cmdExt(args) {
   }
 }
 
+/**
+ * Execute the `exec` command — run Playwright JS code against a live Chrome page.
+ * Supports inline code, --file, stdin pipe, --page, --timeout, --snapshot.
+ *
+ * @param {string[]} args - CLI args
+ * @returns {Promise<void>}
+ */
 async function cmdExec(args) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
@@ -951,9 +1062,15 @@ Examples:
   }
 }
 
+/**
+ * Execute the `daemon` command — background multi-page recording.
+ * Subcommands: start, stop, status.
+ *
+ * @param {string[]} args - CLI args (subcommand + flags)
+ * @returns {Promise<void>}
+ */
 async function cmdDaemon(args) {
   const sub = args[0];
-  const { WallyDaemon } = require('./lib/daemon');
 
   if (sub === 'start') {
     if (args.includes('--help') || args.includes('-h')) {
@@ -1010,7 +1127,6 @@ Examples:
       console.log('[Wally Daemon] Not running');
     }
   } else if (sub === 'status') {
-    const { WallyDaemon } = require('./lib/daemon');
     await WallyDaemon.status();
   } else {
     console.log(`
@@ -1042,11 +1158,25 @@ Examples:
 // CLI
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Extract a named argument value from CLI args array.
+ *
+ * @param {string[]} args - CLI arguments array
+ * @param {string} name - Argument name (e.g. '--url')
+ * @returns {string|null} The value following the argument, or null if not found
+ */
 function getArg(args, name) {
   const idx = args.indexOf(name);
   return idx !== -1 ? args[idx + 1] : null;
 }
 
+/**
+ * Execute the `play` command — replay a saved recording.
+ * Shows an interactive selector or plays a specific record by index.
+ *
+ * @param {string[]} args - Optional record index
+ * @returns {Promise<void>}
+ */
 async function cmdPlay(args) {
   const allRecords = fs.existsSync(RECORDS_DIR) ? fs.readdirSync(RECORDS_DIR).filter(d => {
     const full = path.join(RECORDS_DIR, d);
@@ -1093,11 +1223,16 @@ async function cmdPlay(args) {
   const id = records[choice - 1];
   const spec = path.join(RECORDS_DIR, id, 'playwright.spec.js');
   console.log(`\n[Wally] Playing ${id} → ${spec}\n`);
-  const { spawn } = require('child_process');
   const proc = spawn('node', [spec], { stdio: 'inherit', cwd: path.dirname(spec) });
   await new Promise((res) => proc.on('close', res));
 }
 
+/**
+ * Execute the `interactive` command — text-based interactive menu.
+ * Offers record, play, list, status, stop options.
+ *
+ * @returns {Promise<void>}
+ */
 async function cmdInteractive() {
   console.log(`
 Wally — Interactive
@@ -1138,6 +1273,13 @@ Wally — Interactive
 // CREATE-SKILL — generates Agent Skill from a recorded session
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Execute the `create-skill` command — generate an Agent Skill from a recorded session.
+ * Outputs SKILL.md + optional playwright.spec.js for agent compatibility.
+ *
+ * @param {string[]} args - CLI args (supports -c for latest, session-id, or interactive)
+ * @returns {Promise<void>}
+ */
 async function cmdCreateSkill(args) {
   // Flags
   const useLatest = args.includes('-c');
@@ -1348,6 +1490,13 @@ To replay this workflow:
   console.log(`[Wally] Compatible with: OpenCode, Claude Code, Cursor, VS Code, Gemini CLI, and 40+ agents`);
 }
 
+/**
+ * Generate a generic Agent Skill SKILL.md template (not session-specific).
+ *
+ * @param {string} outDir - Output directory for the skill
+ * @param {string} skillName - Name for the generated skill
+ * @returns {Promise<void>}
+ */
 async function cmdSkillGeneric(outDir, skillName) {
   const skillDir = path.join(outDir, skillName);
   fs.mkdirSync(skillDir, { recursive: true });
@@ -1497,6 +1646,12 @@ const { chromium } = require('playwright');
   console.log(`[Wally] Install: copy ${skillDir}/ to your agent's skills directory`);
 }
 
+/**
+ * CLI entry point — parse args, dispatch to the appropriate command handler.
+ * Handles --verbose flag, directory setup, and command routing.
+ *
+ * @returns {Promise<void>}
+ */
 async function main() {
   const args = process.argv.slice(2);
 
@@ -1558,7 +1713,9 @@ Wally — Browser & Extension Interaction Recorder
 
 Commands:
   wally                          Interactive menu (record / play)
-  wally record                   Start recording (asks URL/profile)
+  wally record                   Start recording (asks URL/profile, uses daemon)
+  wally record start             Legacy single-page recording (polls clicks/fills)
+  wally record stop              Stop legacy single-page recording
   wally play [N]                 Replay saved record (interactive selector)
   wally list                     List records in .records/
   wally snap [--url <url>]       Snapshot current page
@@ -1569,11 +1726,28 @@ Commands:
   wally exec "<code>" [--page <ext|main>] [--snapshot] [--timeout <ms>] [--file <path>]  Execute Playwright JS live
   wally create-skill [-c] [session-id]  Generate Agent Skill from recorded session
 
+record vs daemon:
+  Both record browser interactions, but serve different use cases:
+
+  record (default) — Interactive single-page recording.
+    Prompts for URL/profile, then records the current page.
+    Best for quick, one-off recordings of a single page.
+
+  daemon — Background multi-page recording.
+    Records ALL pages including extension popups (chrome-extension://).
+    Supports --har for network capture, --profile for Chrome profiles.
+    Runs as a background process (detached PID), persists across navigations.
+    Best for extension workflows, multi-tab flows, or long recording sessions.
+
+  In practice, "wally record" (without start/stop) delegates to daemon mode.
+  Use "wally record start/stop" only for the legacy single-page recorder.
+
 Options:
-  --profile <name>  Chrome profile (default: "Profile 9")
-  --url <url>       Navigate to URL
-  --har             Enable network capture (daemon)
-  --har-output <path>  HAR output path
+  --verbose              Enable debug logging (WALLY_VERBOSE=1)
+  --profile <name>       Chrome profile (default: "Profile 9")
+  --url <url>            Navigate to URL
+  --har                  Enable network capture (daemon)
+  --har-output <path>    HAR output path
 
 CDP: ${CDP_URL}
 Sessions: ${SESSIONS_DIR} (tmp, locks)
