@@ -1392,8 +1392,158 @@ Wally — Interactive
 
 async function cmdSkill(args) {
   const outDir = getArg(args, '--output') || './skills';
-  const skillName = getArg(args, '--name') || 'wally-record';
+  const fromDir = getArg(args, '--from');
+  const skillName = getArg(args, '--name');
 
+  // MODE 1: Generate skill from a recorded session
+  if (fromDir) {
+    await cmdSkillFromSession(fromDir, outDir, skillName);
+    return;
+  }
+
+  // MODE 2: Generate generic Wally usage skill
+  await cmdSkillGeneric(outDir, skillName || 'wally-record');
+}
+
+async function cmdSkillFromSession(fromDir, outDir, skillName) {
+  // Find actions.jsonl
+  const actionsFile = path.join(fromDir, 'actions.jsonl');
+  if (!fs.existsSync(actionsFile)) {
+    console.log(`[Wally] Error: actions.jsonl not found in ${fromDir}`);
+    console.log(`[Wally] Usage: wally skill --from .records/<session-dir>`);
+    return;
+  }
+
+  // Read actions
+  const lines = fs.readFileSync(actionsFile, 'utf8').trim().split('\n').filter(Boolean);
+  const actions = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+
+  if (actions.length === 0) {
+    console.log(`[Wally] Error: No actions found in ${actionsFile}`);
+    return;
+  }
+
+  // Read Playwright test if it exists
+  const testFile = path.join(fromDir, 'playwright.spec.js');
+  const testCode = fs.existsSync(testFile) ? fs.readFileSync(testFile, 'utf8') : null;
+
+  // Detect pages and extensions
+  const pages = new Set();
+  const extensions = new Set();
+  actions.forEach(a => {
+    if (a.page) pages.add(a.page);
+    if (a.url && a.url.startsWith('chrome-extension://')) {
+      const match = a.url.match(/chrome-extension:\/\/([a-z]+)/);
+      if (match) extensions.add(match[1]);
+    }
+  });
+
+  // Build action summary
+  const actionSummary = actions.map(a => {
+    switch (a.type) {
+      case 'click': return `Click: ${a.selector}${a.text ? ` ("${a.text.substring(0, 30)}")` : ''}`;
+      case 'fill': return `Fill: ${a.selector} = "${(a.value || '').substring(0, 30)}"`;
+      case 'navigate': return `Navigate: ${a.url}`;
+      case 'extension_connect': return `Extension connected: ${a.account || 'unknown'}`;
+      default: return `${a.type}: ${a.selector || a.url || ''}`;
+    }
+  });
+
+  // Generate skill name from session
+  const autoName = skillName || `wally-session-${path.basename(fromDir)}`;
+  const skillDir = path.join(outDir, autoName);
+  fs.mkdirSync(skillDir, { recursive: true });
+
+  // Generate SKILL.md
+  const skillContent = `---
+name: ${autoName}
+description: "Trigger: replay recorded flow, run recorded workflow, execute recorded session. Replay a browser workflow recorded with Wally (${actions.length} actions across ${pages.size} pages)."
+license: BSD-3-Clause
+metadata:
+  author: "cxto21"
+  version: "1.0"
+  source: "wally-recorded-session"
+  session: "${path.basename(fromDir)}"
+  actions: "${actions.length}"
+  pages: "${Array.from(pages).join(', ')}"
+---
+
+# Recorded Workflow: ${path.basename(fromDir)}
+
+This skill replays a browser workflow recorded with Wally.
+
+## Session Info
+
+- **Actions**: ${actions.length}
+- **Pages**: ${Array.from(pages).join(', ')}${extensions.size > 0 ? `\n- **Extensions**: ${Array.from(extensions).join(', ')}` : ''}
+- **Recorded**: ${actions[0]?.ts || 'unknown'}
+
+## Recorded Steps
+
+${actionSummary.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+
+## How to Run
+
+### Prerequisites
+
+- Node.js >= 18
+- Google Chrome with CDP on port 9222
+- Playwright: \`npm install playwright\`
+
+### Option A: Run the generated Playwright test
+
+\`\`\`bash
+# Start Chrome with CDP
+google-chrome --remote-debugging-port=9222
+
+# Run the test
+node playwright.spec.js
+\`\`\`
+
+### Option B: Replay with Wally
+
+\`\`\`bash
+# Start Chrome with CDP
+google-chrome --remote-debugging-port=9222
+
+# Replay the recorded session
+node wally.js play ${path.basename(fromDir)}
+\`\`\`
+
+## Generated Playwright Test
+
+\`\`\`javascript
+${testCode || '// Test not available — run: wally export --from ' + fromDir}
+\`\`\`
+
+## Agent Instructions
+
+To replay this workflow:
+
+1. Ensure Chrome is running with CDP on port 9222
+2. Navigate to the starting URL: ${actions.find(a => a.type === 'navigate')?.url || 'see first action'}
+3. Execute each recorded step in order
+4. Handle any extension popups (auto-detected as chrome-extension:// pages)
+5. Verify the final state matches expectations
+`;
+
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillContent);
+
+  // Copy playwright.spec.js if it exists
+  if (testCode) {
+    fs.writeFileSync(path.join(skillDir, 'playwright.spec.js'), testCode);
+  }
+
+  // Copy actions.jsonl for reference
+  fs.copyFileSync(actionsFile, path.join(skillDir, 'actions.jsonl'));
+
+  console.log(`[Wally] Skill generated from session: ${skillDir}/`);
+  console.log(`[Wally] Name: ${autoName}`);
+  console.log(`[Wally] Actions: ${actions.length}, Pages: ${pages.size}`);
+  console.log(`[Wally] Compatible with: OpenCode, Claude Code, Cursor, VS Code, Gemini CLI, and 40+ agents`);
+}
+
+async function cmdSkillGeneric(outDir, skillName) {
   const skillDir = path.join(outDir, skillName);
   fs.mkdirSync(skillDir, { recursive: true });
 
@@ -1605,7 +1755,7 @@ Commands:
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
   wally exec "<code>" [--page <ext|main>] [--snapshot] [--timeout <ms>] [--file <path>]  Execute Playwright JS live
-  wally skill [--name <name>] [--output <dir>]  Generate Agent Skill for AI agents
+  wally skill [--name <name>] [--output <dir>] [--from <dir>]  Generate Agent Skill (generic or from recorded session)
 
 Options:
   --profile <name>  Chrome profile (default: "Profile 9")
