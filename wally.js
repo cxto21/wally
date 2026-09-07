@@ -1386,6 +1386,171 @@ Wally — Interactive
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SKILL GENERATOR — exports Agent Skills format for AI agents
+// ═══════════════════════════════════════════════════════════════════
+
+async function cmdSkill(args) {
+  const outDir = getArg(args, '--output') || './skills';
+  const skillName = getArg(args, '--name') || 'wally-record';
+
+  const skillDir = path.join(outDir, skillName);
+  fs.mkdirSync(skillDir, { recursive: true });
+
+  // Generate SKILL.md
+  const skillContent = `---
+name: ${skillName}
+description: "Trigger: record browser, record extension, capture interaction, browser testing, extension testing, chrome extension, playwright export. Record browser and Chrome extension interactions via CDP and export Playwright test scripts."
+license: BSD-3-Clause
+metadata:
+  author: "cxto21"
+  version: "1.0"
+  homepage: "https://cxto21.github.io/wally/"
+  repository: "https://github.com/cxto21/wally"
+---
+
+# Wally — Browser & Extension Interaction Recorder
+
+Record browser actions and Chrome extension popups via CDP. Export standalone Playwright test scripts.
+
+## Prerequisites
+
+- Node.js >= 18
+- Google Chrome
+- Playwright: \`npm install playwright\`
+
+## Core Commands
+
+### Start Recording (Daemon Mode)
+
+\`\`\`bash
+node wally.js daemon start --url <website-url>
+\`\`\`
+
+Options:
+- \`--url <url>\` — Navigate to URL before recording
+- \`--profile <name>\` — Chrome profile (default: "Profile 9")
+- \`--har\` — Enable network capture (generates network.har)
+- \`--har-output <path>\` — Custom HAR output path
+
+Example:
+\`\`\`bash
+node wally.js daemon start --url https://example.com
+node wally.js daemon start --profile "Profile 9" --url https://example.com --har
+\`\`\`
+
+### Stop Recording
+
+\`\`\`bash
+node wally.js daemon stop
+\`\`\`
+
+Output:
+- \`.records/<session>/actions.jsonl\` — recorded actions
+- \`.records/<session>/playwright.spec.js\` — standalone Playwright test
+- \`.records/<session>/network.har\` — network capture (if --har used)
+
+### Check Status
+
+\`\`\`bash
+node wally.js daemon status
+\`\`\`
+
+### Export to Playwright
+
+\`\`\`bash
+node wally.js export
+\`\`\`
+
+Regenerates Playwright test from last recording.
+
+### Snapshot Page
+
+\`\`\`bash
+node wally.js snap --url <url>
+\`\`\`
+
+Takes accessibility snapshot of current page.
+
+### Connect Wallet
+
+\`\`\`bash
+node wally.js ext
+\`\`\`
+
+Detects and connects wallet providers (EVM/Starknet/Solana).
+
+### Execute Live Code
+
+\`\`\`bash
+node wally.js exec "return await page.title()"
+node wally.js exec "await page.getByRole('button', {name: /Approve/}).click()"
+node wally.js exec --page ext "return await extPage.title()"
+\`\`\`
+
+Options:
+- \`--page <ext|main>\` — Target page (default: main)
+- \`--timeout <ms>\` — Timeout (default: 30000)
+- \`--snapshot\` — Print accessibility tree after exec
+- \`--file <path>\` — Execute JS from file
+
+## Workflow
+
+1. Start Chrome with CDP: \`google-chrome --remote-debugging-port=9222\`
+2. Run \`node wally.js daemon start --url <target>\`
+3. Interact with browser and extensions (Wally records automatically)
+4. Run \`node wally.js daemon stop\`
+5. Find test in \`.records/<session>/playwright.spec.js\`
+
+## What Gets Recorded
+
+- Clicks (buttons, links, extension popups)
+- Form fills (inputs, textareas)
+- Navigations
+- Extension interactions (\`chrome-extension://\` pages)
+- Wallet provider connections (EVM/Starknet/Solana)
+- Network requests (with --har flag)
+
+## Generated Test Structure
+
+\`\`\`javascript
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+  const context = browser.contexts()[0];
+  let page = context.pages()[0];
+
+  // Recorded actions...
+  await page.getByRole('button', { name: /Connect/ }).click();
+  await page.waitForTimeout(1000);
+
+  // Extension page handling (auto-detected)
+  let extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
+  if (extPage) {
+    await extPage.getByRole('button', { name: /Approve/ }).click();
+  }
+
+  await browser.close();
+})();
+\`\`\`
+
+## Tips
+
+- Extension popups are auto-detected when they open
+- Use \`--page ext\` in exec to target extension pages
+- Password prompts in extensions are handled automatically
+- Network capture (\`--har\`) is useful for API debugging
+- Generated tests are standalone — run with \`node playwright.spec.js\`
+`;
+
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillContent);
+
+  console.log(`[Wally] Skill generated: ${skillDir}/SKILL.md`);
+  console.log(`[Wally] Name: ${skillName}`);
+  console.log(`[Wally] Compatible with: OpenCode, Claude Code, Cursor, VS Code, Gemini CLI, and 40+ agents`);
+  console.log(`[Wally] Install: copy ${skillDir}/ to your agent's skills directory`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const cmd = args[0];
@@ -1429,6 +1594,7 @@ async function main() {
     case 'wallet': console.log('[Wally] Deprecation: "wallet" is now "ext". Use: wally ext'); await cmdExt(args.slice(1)); break;
     case 'daemon': await cmdDaemon(args.slice(1)); break;
     case 'exec': await cmdExec(args.slice(1)); break;
+    case 'skill': await cmdSkill(args.slice(1)); break;
     case undefined:
     case 'interactive':
       await cmdInteractive();
@@ -1449,6 +1615,7 @@ Commands:
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
   wally exec "<code>" [--page <ext|main>] [--snapshot] [--timeout <ms>] [--file <path>]  Execute Playwright JS live
+  wally skill [--name <name>] [--output <dir>]  Generate Agent Skill for AI agents
 
 Options:
   --profile <name>  Chrome profile (default: "Profile 9")
