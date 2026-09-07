@@ -3,16 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Wally — Turn any workflow into a stable API</title>
-<meta name="description" content="Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.">
-<meta name="keywords" content="wally, browser automation, playwright, chrome cdp, extension recorder, har, workflow api, interaction recorder, chrome extension, testing">
+<title>Wally — Record Browser & Extension Interactions</title>
+<meta name="description" content="Wally records browser actions and Chrome extension popups via CDP. Captures clicks, fills, navigations and exports standalone Playwright test scripts.">
+<meta name="keywords" content="wally, browser automation, playwright, chrome cdp, extension recorder, har, interaction recorder, chrome extension, testing, workflow recorder">
 <meta name="author" content="Ignacio del Corro">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="theme-color" content="#0f1115">
 <link rel="canonical" href="https://cxto21.github.io/wally/">
 <!-- Open Graph -->
-<meta property="og:title" content="Wally — Turn any workflow into a stable API">
-<meta property="og:description" content="Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.">
+<meta property="og:title" content="Wally — Record Browser & Extension Interactions">
+<meta property="og:description" content="Wally records browser actions and Chrome extension popups via CDP. Captures clicks, fills, navigations and exports standalone Playwright test scripts.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://cxto21.github.io/wally/">
 <meta property="og:image" content="https://cxto21.github.io/wally/images/background.png">
@@ -20,8 +20,8 @@
 <meta property="og:locale" content="en_US">
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Wally — Turn any workflow into a stable API">
-<meta name="twitter:description" content="Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.">
+<meta name="twitter:title" content="Wally — Record Browser & Extension Interactions">
+<meta name="twitter:description" content="Wally records browser actions and Chrome extension popups via CDP. Captures clicks, fills, navigations and exports standalone Playwright test scripts.">
 <meta name="twitter:image" content="https://cxto21.github.io/wally/images/background.png">
 <!-- Discovery -->
 <link rel="sitemap" type="application/xml" href="/wally/sitemap.xml">
@@ -115,7 +115,7 @@ nav{position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:c
     {
       "@type": "SoftwareApplication",
       "name": "Wally",
-      "description": "Wally browser extension interaction recorder: capture clicks, fills, navigations via Chrome CDP and export standalone Playwright scripts with HAR.",
+      "description": "Wally records browser actions and Chrome extension popups via CDP. Captures clicks, fills, navigations and exports standalone Playwright test scripts.",
       "url": "https://cxto21.github.io/wally/",
       "downloadUrl": "https://github.com/cxto21/wally",
       "codeRepository": "https://github.com/cxto21/wally",
@@ -132,7 +132,7 @@ nav{position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:c
         "price": "0",
         "priceCurrency": "USD"
       },
-      "keywords": "browser automation, playwright, chrome cdp, har, extension recorder"
+      "keywords": "browser automation, playwright, chrome cdp, har, extension recorder, interaction recorder"
     },
     {
       "@type": "WebSite",
@@ -162,32 +162,34 @@ nav{position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:c
 <section class="hero">
   <div class="hero-inner">
     <div class="hero-text">
-      <h1><span>Turn any workflow</span><span>into a stable API</span></h1>
+      <h1><span>Record any browser</span><span>& extension interaction</span></h1>
       <h2 class="sr-only">Browser and extension interaction recorder via Chrome CDP with Playwright export and HAR network capture</h2>
-      <p>Build, manage, and scale secure APIs from complex processes instantly with Wally's intelligent platform.</p>
+      <p>Capture clicks, fills, navigations, and extension popups via Chrome CDP. Export standalone Playwright test scripts with HAR network capture.</p>
       <div class="hero-actions">
-        <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener" class="btn btn-primary">Get Started Free</a>
-        <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener" class="btn btn-outline">View Docs</a>
+        <a href="https://github.com/cxto21/wally" target="_blank" rel="noopener" class="btn btn-primary">Get Started</a>
+        <a href="https://github.com/cxto21/wally#readme" target="_blank" rel="noopener" class="btn btn-outline">View Docs</a>
       </div>
     </div>
 
     <div class="code-card" aria-label="Code example">
       <div class="card-header">
         <div class="card-dots"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
-        <span class="card-title">WALLY API INTEGRATIONS v1.2.0</span>
+        <span class="card-title">WALLY TERMINAL</span>
       </div>
       <div class="card-body">
-        <div><span class="cmt">// Wally API Integrations v1.2.0</span></div>
-        <div><span class="kw">import</span> { <span class="fn">Wally</span> } <span class="kw">from</span> <span class="str">"wally-core"</span></div>
+        <div><span class="cmt"># Start recording</span></div>
+        <div><span class="fn">node</span> wally.js <span class="prop">daemon start</span> <span class="str">--url https://example.com</span></div>
         <div>&nbsp;</div>
-        <div><span class="fn">wally</span>.<span class="prop">workflow</span>(<span class="str">"process_orders"</span>)</div>
-        <div>&nbsp;&nbsp;.<span class="prop">connect</span>(<span class="str">"Shopify"</span>, { <span class="prop">key</span>: <span class="fn">api_key</span> })</div>
-        <div>&nbsp;&nbsp;.<span class="prop">map</span>(<span class="str">"CustomerData"</span>, <span class="fn">processFields</span>)</div>
-        <div>&nbsp;&nbsp;.<span class="prop">sendTo</span>(<span class="str">"Stripe"</span>, { <span class="prop">action</span>: <span class="str">"Charge"</span> });</div>
+        <div><span class="cmt"># Record extension popup</span></div>
+        <div><span class="cmt"># (any chrome-extension:// auto-detected)</span></div>
+        <div>&nbsp;</div>
+        <div><span class="cmt"># Stop + export</span></div>
+        <div><span class="fn">node</span> wally.js <span class="prop">daemon stop</span></div>
+        <div><span class="fn">node</span> wally.js <span class="prop">export</span></div>
         <div class="card-sep"></div>
-        <div class="status-line"><span class="status-dot"></span> Status: Listening (Port 4000)</div>
-        <div class="conn">Connections: <strong>14 Services</strong></div>
-        <div class="conn"><span class="check">✓</span> Connected: Salesforce, Slack, Jira, Github, Twilio</div>
+        <div class="status-line"><span class="status-dot"></span> Output: playwright.spec.js</div>
+        <div class="conn">Includes: <strong>actions.jsonl + network.har</strong></div>
+        <div class="conn"><span class="check">✓</span> Works with any website & any Chrome extension</div>
       </div>
     </div>
   </div>
