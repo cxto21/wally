@@ -89,8 +89,11 @@ async function main() {
     if (/password|contraseña|desbloquear/i.test(extText)) {
       console.log('  Password prompt detected');
 
-      // Try to fill password
-      const password = process.env.QA_READY_PASSWORD || 'MMOR4MORA!';
+      // Try to fill password from env var (no hardcoded fallback)
+      const password = process.env.QA_READY_PASSWORD || '';
+      if (!password) {
+        console.log('  Warning: QA_READY_PASSWORD not set, skipping password fill');
+      }
       const pwInput = extPage.locator('input[type="password"], input').first();
       if (await pwInput.isVisible().catch(() => false)) {
         await pwInput.fill(password);

@@ -24,12 +24,19 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { createLogger } = require('./lib/logger');
+const { validateFilePath, validateUrl } = require('./lib/validator');
+
+const log = createLogger('wally');
 
 const CDP_URL = 'http://127.0.0.1:9222';
 const WALLY_DIR = '/tmp/opencode/wally';
 const SESSIONS_DIR = path.join(WALLY_DIR, 'sessions');
 const RECORDS_DIR = path.join(__dirname, '.records');
-const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || 'MMOR4MORA!';
+const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || '';
+if (!QA_READY_PASSWORD) {
+  console.warn('[Wally] QA_READY_PASSWORD not set — extension password prompts will be skipped');
+}
 const CHROME_DATA_DIR = '/tmp/opencode/chrome-cdp';
 const CHROME_DEFAULT_PROFILE = 'Profile 9';
 
@@ -678,6 +685,22 @@ async function cmdRecord(args) {
 async function cmdExport(args) {
   // Support --from <record-dir> to regenerate from .records/ (actions.jsonl)
   const fromDir = getArg(args, '--from');
+  const outputFile = getArg(args, '--output') || 'wally-export.spec.js';
+
+  // Validate inputs
+  if (fromDir) {
+    const fromCheck = validateFilePath(fromDir);
+    if (!fromCheck.valid) {
+      console.error(`[Wally] ${fromCheck.error}`);
+      process.exit(1);
+    }
+  }
+  const outputCheck = validateFilePath(outputFile);
+  if (!outputCheck.valid) {
+    console.error(`[Wally] ${outputCheck.error}`);
+    process.exit(1);
+  }
+
   let sessionDir, actionsFile;
 
   if (fromDir && fs.existsSync(path.join(fromDir, 'actions.jsonl'))) {
@@ -712,8 +735,6 @@ async function cmdExport(args) {
     console.error(`[Wally] Actions file is empty.`);
     process.exit(1);
   }
-
-  const outputFile = getArg(args, '--output') || 'wally-export.spec.js';
 
   // Group actions by page
   const pages = new Map();
@@ -1060,6 +1081,15 @@ Examples:
   let timeoutStr = getArg(args, '--timeout');
   let timeout = timeoutStr ? parseInt(timeoutStr, 10) : 30000;
   let wantSnapshot = args.includes('--snapshot');
+
+  // Validate --file path
+  if (filePath) {
+    const fileCheck = validateFilePath(filePath);
+    if (!fileCheck.valid) {
+      console.error(`[Wally Exec] ${fileCheck.error}`);
+      process.exit(1);
+    }
+  }
 
   // Filter out known flags to get positional code
   const filtered = [];
@@ -1751,6 +1781,13 @@ const { chromium } = require('playwright');
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Handle --verbose flag (sets WALLY_VERBOSE for logger)
+  if (args.includes('--verbose')) {
+    process.env.WALLY_VERBOSE = '1';
+    args.splice(args.indexOf('--verbose'), 1);
+  }
+
   const cmd = args[0];
   const sub = args[1];
 
