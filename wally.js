@@ -1472,14 +1472,6 @@ node wally.js snap --url <url>
 
 Takes accessibility snapshot of current page.
 
-### Connect Wallet
-
-\`\`\`bash
-node wally.js ext
-\`\`\`
-
-Detects and connects wallet providers (EVM/Starknet/Solana).
-
 ### Execute Live Code
 
 \`\`\`bash
@@ -1508,7 +1500,6 @@ Options:
 - Form fills (inputs, textareas)
 - Navigations
 - Extension interactions (\`chrome-extension://\` pages)
-- Wallet provider connections (EVM/Starknet/Solana)
 - Network requests (with --har flag)
 
 ## Generated Test Structure
