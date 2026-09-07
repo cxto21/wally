@@ -1391,53 +1391,97 @@ Wally — Interactive
 // ═══════════════════════════════════════════════════════════════════
 
 async function cmdCreateSkill(args) {
-  // Find session: accept dir path or session ID
-  let sessionArg = args.find(a => !a.startsWith('-'));
-  let sessionDir;
+  // Flags
+  const useLatest = args.includes('-c');
 
-  if (!sessionArg) {
-    // Auto-detect: use latest session
-    const sessions = fs.existsSync(RECORDS_DIR)
-      ? fs.readdirSync(RECORDS_DIR).filter(d => fs.statSync(path.join(RECORDS_DIR, d)).isDirectory()).sort().reverse()
-      : [];
-    if (sessions.length === 0) {
-      console.log(`[Wally] No recorded sessions found in ${RECORDS_DIR}`);
-      console.log(`[Wally] Usage: wally create-skill <session-id-or-path>`);
+  // Find sessions with actions.jsonl
+  const allSessions = fs.existsSync(RECORDS_DIR)
+    ? fs.readdirSync(RECORDS_DIR).filter(d => {
+        const full = path.join(RECORDS_DIR, d);
+        return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'actions.jsonl'));
+      }).sort().reverse()
+    : [];
+
+  if (allSessions.length === 0) {
+    console.log('[Wally] No recorded sessions found in', RECORDS_DIR);
+    console.log('Run: wally daemon start --url https://...');
+    return;
+  }
+
+  let sessionDir;
+  let sessionId;
+
+  // MODE: -c flag → use latest session
+  if (useLatest) {
+    sessionId = allSessions[0];
+    sessionDir = path.join(RECORDS_DIR, sessionId);
+    console.log(`[Wally] Using latest session: ${sessionId}`);
+  }
+  // MODE: argument → find specific session
+  else if (args[0] && !args[0].startsWith('-')) {
+    const arg = args[0];
+    if (fs.existsSync(arg) && fs.existsSync(path.join(arg, 'actions.jsonl'))) {
+      sessionDir = arg;
+      sessionId = path.basename(arg);
+    } else if (fs.existsSync(path.join(RECORDS_DIR, arg))) {
+      sessionDir = path.join(RECORDS_DIR, arg);
+      sessionId = arg;
+    } else {
+      console.log(`[Wally] Error: Session not found: ${arg}`);
+      console.log('[Wally] Available sessions:');
+      allSessions.forEach((s, i) => console.log(`  ${i + 1}) ${s}`));
       return;
     }
-    sessionArg = sessions[0];
-    console.log(`[Wally] Using latest session: ${sessionArg}`);
+  }
+  // MODE: no args → interactive selector
+  else {
+    console.log('\n[Wally Create Skill] Available sessions:\n');
+    allSessions.forEach((id, idx) => {
+      const full = path.join(RECORDS_DIR, id);
+      const actionsFile = path.join(full, 'actions.jsonl');
+      const hasSkill = fs.existsSync(path.join(full, 'skill', 'SKILL.md'));
+      let info = '';
+      try {
+        const lines = fs.readFileSync(actionsFile, 'utf8').trim().split('\n').filter(Boolean);
+        const first = lines.length ? JSON.parse(lines[0]) : {};
+        const pages = [...new Set(lines.map(l => { try { return JSON.parse(l).page || 'main'; } catch { return 'main'; } }))].join(', ');
+        info = `${lines.length} actions | ${pages} | ${first.ts ? new Date(first.ts).toLocaleString() : ''}`;
+      } catch {}
+      const skillMark = hasSkill ? ' [skill]' : '';
+      console.log(`  ${idx + 1}) ${id}  — ${info}${skillMark}`);
+    });
+
+    const ans = await ask(`\nSelect session to create skill [1-${allSessions.length}]: `);
+    const choice = parseInt(ans.trim(), 10);
+
+    if (!choice || choice < 1 || choice > allSessions.length) {
+      console.log('[Wally] Invalid selection');
+      return;
+    }
+
+    sessionId = allSessions[choice - 1];
+    sessionDir = path.join(RECORDS_DIR, sessionId);
   }
 
-  // Resolve session directory
-  if (fs.existsSync(sessionArg) && fs.existsSync(path.join(sessionArg, 'actions.jsonl'))) {
-    sessionDir = sessionArg;
-  } else if (fs.existsSync(path.join(RECORDS_DIR, sessionArg))) {
-    sessionDir = path.join(RECORDS_DIR, sessionArg);
-  } else {
-    console.log(`[Wally] Error: Session not found: ${sessionArg}`);
-    console.log(`[Wally] Usage: wally create-skill <session-id>`);
-    console.log(`[Wally] Available sessions:`);
-    const sessions = fs.existsSync(RECORDS_DIR)
-      ? fs.readdirSync(RECORDS_DIR).filter(d => fs.statSync(path.join(RECORDS_DIR, d)).isDirectory()).sort().reverse()
-      : [];
-    sessions.forEach(s => console.log(`  ${s}`));
-    return;
-  }
-
-  // Find actions.jsonl
-  const actionsFile = path.join(sessionDir, 'actions.jsonl');
-  if (!fs.existsSync(actionsFile)) {
-    console.log(`[Wally] Error: actions.jsonl not found in ${sessionDir}`);
-    return;
+  // Check if skill already exists
+  const skillDir = path.join(sessionDir, 'skill');
+  const skillFile = path.join(skillDir, 'SKILL.md');
+  if (fs.existsSync(skillFile)) {
+    console.log(`[Wally] Skill already exists: ${skillFile}`);
+    const ans = await ask('[Wally] Overwrite? (y/N): ');
+    if (ans.trim().toLowerCase() !== 'y') {
+      console.log('[Wally] Aborted');
+      return;
+    }
   }
 
   // Read actions
+  const actionsFile = path.join(sessionDir, 'actions.jsonl');
   const lines = fs.readFileSync(actionsFile, 'utf8').trim().split('\n').filter(Boolean);
   const actions = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 
   if (actions.length === 0) {
-    console.log(`[Wally] Error: No actions found in ${actionsFile}`);
+    console.log('[Wally] Error: No actions found');
     return;
   }
 
@@ -1468,8 +1512,6 @@ async function cmdCreateSkill(args) {
   });
 
   // Generate skill name and directory inside the session
-  const sessionId = path.basename(sessionDir);
-  const skillDir = path.join(sessionDir, 'skill');
   fs.mkdirSync(skillDir, { recursive: true });
 
   // Generate SKILL.md
@@ -1770,7 +1812,7 @@ Commands:
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
   wally exec "<code>" [--page <ext|main>] [--snapshot] [--timeout <ms>] [--file <path>]  Execute Playwright JS live
-  wally create-skill [session-id]      Generate Agent Skill from recorded session
+  wally create-skill [-c] [session-id]  Generate Agent Skill from recorded session
 
 Options:
   --profile <name>  Chrome profile (default: "Profile 9")
