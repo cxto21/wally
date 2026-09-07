@@ -25,7 +25,6 @@ node wally.js daemon start --profile "Profile 9" --url https://example.com
 | `snap [--url]` | Snapshot current page |
 | `record start/stop` | Manual recording |
 | `export` | Export → Playwright test |
-| `ext` | Connect wallet (EVM/Starknet/Solana) |
 | `exec "<code>" [--file] [--page] [--snapshot]` | Execute Playwright JS live against Chrome |
 | `exec --help` | Show exec usage |
 

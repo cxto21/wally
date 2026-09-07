@@ -1610,7 +1610,6 @@ Commands:
   wally list                     List records in .records/
   wally snap [--url <url>]       Snapshot current page
   wally export [--output <file>] [--from <dir>]  Export recorded actions → Playwright test
-  wally ext                      Connect wallet (EVM/Starknet/Solana)
   wally daemon start [--url <url>] [--profile <name>] [--har] [--har-output <path>]  Background recording
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
