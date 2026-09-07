@@ -1375,9 +1375,18 @@ async function cmdCreateSkill(args) {
     return;
   }
 
-  // Read Playwright test if it exists
+  // Read or generate Playwright test
   const testFile = path.join(sessionDir, 'playwright.spec.js');
-  const testCode = fs.existsSync(testFile) ? fs.readFileSync(testFile, 'utf8') : null;
+  let testCode;
+  if (fs.existsSync(testFile)) {
+    testCode = fs.readFileSync(testFile, 'utf8');
+  } else {
+    // Generate from actions
+    testCode = generatePlaywrightTest(actions, { includeNetwork: false });
+    // Save to session for future use
+    fs.writeFileSync(testFile, testCode);
+    console.log(`[Wally] Generated playwright.spec.js for session`);
+  }
 
   // Detect pages and extensions
   const pages = new Set();
@@ -1479,10 +1488,8 @@ To replay this workflow:
 
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillContent);
 
-  // Copy playwright.spec.js if it exists
-  if (testCode) {
-    fs.writeFileSync(path.join(skillDir, 'playwright.spec.js'), testCode);
-  }
+  // Write playwright.spec.js to skill directory
+  fs.writeFileSync(path.join(skillDir, 'playwright.spec.js'), testCode);
 
   console.log(`[Wally] Skill created: ${skillDir}/`);
   console.log(`[Wally] Session: ${sessionId}`);
