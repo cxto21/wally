@@ -11,7 +11,7 @@
     "snap": "node wally.js snap",
     "record": "node wally.js record",
     "daemon": "node wally.js daemon",
-    "wallet": "node wally.js wallet",
+    "ext": "node wally.js ext",
     "export": "node wally.js export",
     "test": "node wally.js snap"
   },

@@ -25,11 +25,12 @@ Wally attaches to Chrome via the Chrome DevTools Protocol (CDP) on port 9222. It
 ```bash
 npm install playwright
 node wally.js daemon start --url https://example.com
-node wally.js daemon start --profile "Profile 9" --url https://avnu.fi
+node wally.js daemon start --profile "Profile 9" --url https://example.com
 node wally.js daemon start --har
 node wally.js daemon status
 node wally.js daemon stop
 node wally.js export
+node wally.js ext
 node wally.js exec "return await page.title()"
 node wally.js exec "await page.getByRole('button', {name: /Approve/}).click()"
 ```

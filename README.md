@@ -6,13 +6,13 @@ Records browser actions and extension popups (any `chrome-extension://`) via Chr
 
 ```bash
 npm install playwright
-node wally.js daemon start --url https://avnu.fi
+node wally.js daemon start --url https://example.com
 ```
 
 Wally will ask to launch Chrome if CDP is not running. Use `--profile` to pick a Chrome profile:
 
 ```bash
-node wally.js daemon start --profile "Profile 9" --url https://avnu.fi
+node wally.js daemon start --profile "Profile 9" --url https://example.com
 ```
 
 ## Commands
@@ -25,6 +25,7 @@ node wally.js daemon start --profile "Profile 9" --url https://avnu.fi
 | `snap [--url]` | Snapshot current page |
 | `record start/stop` | Manual recording |
 | `export` | Export → Playwright test |
+| `ext` | Detect and connect wallet providers (EVM/Starknet/Solana) |
 | `exec "<code>" [--file] [--page] [--snapshot]` | Execute Playwright JS live against Chrome |
 | `exec --help` | Show exec usage |
 

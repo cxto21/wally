@@ -336,7 +336,7 @@ function normalizeUrl(input) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// EXTENSION HANDLER — generic (works with any wallet extension)
+// EXTENSION HANDLER — generic (works with any chrome-extension://)
 // ═══════════════════════════════════════════════════════════════════
 
 async function handleExtension(context, page, actionsFile) {
@@ -356,7 +356,7 @@ async function handleExtension(context, page, actionsFile) {
     console.log(`[Wally] Extension: detected password prompt (${extUrl.substring(0, 40)}...)`);
 
     // Try to fill password from env or common default
-    const password = process.env.QA_READY_PASSWORD || process.env.QA_WALLET_PASSWORD || '';
+    const password = process.env.QA_READY_PASSWORD || process.env.QA_EXTENSION_PASSWORD || '';
     if (password) {
       const pwInput = extPage.locator('input[type="password"], input[placeholder*="password" i], input[placeholder*="contraseña" i]').first();
       if (await pwInput.isVisible().catch(() => false)) {
@@ -593,18 +593,18 @@ async function cmdRecord(args) {
       }
     });
 
-    // Record starknet wallet connect
+    // Record wallet provider connect
     await page.evaluate(() => {
-      if (!window.__wally_wallet_observed) {
-        window.__wally_wallet_observed = true;
+      if (!window.__wally_ext_observed) {
+        window.__wally_ext_observed = true;
         let wasConnected = !!window.starknet?.isConnected;
         const check = () => {
           const connected = !!window.starknet?.isConnected;
           if (connected && !wasConnected) {
             const account = window.starknet?.selectedAddress || 'unknown';
             window.__wally_actions = window.__wally_actions || [];
-            window.__wally_actions.push({ type: 'wallet_connect', account });
-            console.log('[Wally] Wallet connected:', account);
+            window.__wally_actions.push({ type: 'extension_connect', account });
+            console.log('[Wally] Wallet provider connected:', account);
           }
           wasConnected = connected;
         };
@@ -637,8 +637,8 @@ async function cmdRecord(args) {
             console.log(`[Wally] Click: ${action.selector} "${action.text}"`);
           } else if (action.type === 'fill') {
             console.log(`[Wally] Fill: ${action.selector} "${(action.value || '').substring(0, 60)}"`);
-          } else if (action.type === 'wallet_connect') {
-            console.log(`[Wally] Wallet connect: ${action.account}`);
+          } else if (action.type === 'extension_connect') {
+            console.log(`[Wally] Extension connect: ${action.account}`);
           }
         }
       } catch {}
@@ -812,7 +812,7 @@ const CDP_URL = '${CDP_URL}';
     } else if (action.type === 'click') {
       const sel = action.selector;
       const target = isExtAction ? 'extPage' : 'page';
-      // Password inputs are optional (wallet may already be unlocked)
+      // Password inputs are optional (extension may already be unlocked)
       if (sel.includes('password')) {
         test += `${indent}{ const _pw = ${target}.locator('${sel}').first(); if (await _pw.isVisible().catch(()=>false)) await _pw.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip password click not visible'); }\n`;
       } else       if (sel.startsWith('[data-testid=') || sel.startsWith('#') || sel.startsWith('[aria-label=')) {
@@ -833,16 +833,16 @@ const CDP_URL = '${CDP_URL}';
       } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
         // CSS path (fallback nth-child) — fragile and often non-interactive (loading overlays, error messages)
         const text = action.text || '';
-        const walletKeywords = ['Ready', 'Argent', 'Braavos', 'Wallet', 'Carrot', 'STRK', 'Connect'];
-        const isWalletOption = walletKeywords.some(k => text.includes(k));
+        const extensionKeywords = ['Ready', 'Argent', 'Braavos', 'Wallet', 'Carrot', 'STRK', 'Connect'];
+        const isExtensionOption = extensionKeywords.some(k => text.includes(k));
         const isErrorOverlay = text.includes('Contrase') || text.includes('Loading') || text.includes('Bloq May') || text.includes('Desbloque');
-        const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && text.length > 15 && !isWalletOption;
+        const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && text.length > 15 && !isExtensionOption;
         if (isTextOnly || isErrorOverlay) {
           test += `${indent}// Skipped non-interactive: ${sel} "${text.substring(0, 40).replace(/'/g, "\\'").replace(/\n/g,' ')}"\n`;
-        } else if (isWalletOption && text) {
+        } else if (isExtensionOption && text) {
           const escText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').substring(0, 30);
-          const varName = `_wallet_${Math.random().toString(36).substring(2,6)}`;
-          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { try { await ${varName}.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Wallet click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip wallet selector not visible: ' + ${JSON.stringify(escText)}); } }\n`;
+          const varName = `_ext_${Math.random().toString(36).substring(2,6)}`;
+          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { try { await ${varName}.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Extension click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip extension selector not visible: ' + ${JSON.stringify(escText)}); } }\n`;
         } else {
           // Robust: wait for visible with longer timeout for network/latency, skip if not found
           test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): ${sel}'); } }\n`;
@@ -860,9 +860,9 @@ const CDP_URL = '${CDP_URL}';
       // All fills are optional — page may not have loaded, or element may be transient
       test += `${indent}{ const _fill = ${target}.locator('${action.selector}').first(); if (await _fill.isVisible().catch(()=>false)) { try { await _fill.fill('${escaped}'); } catch(e) { console.log('[Wally] Fill failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip fill not visible: ${action.selector}'); } }\n`;
       test += `${indent}await page.waitForTimeout(500);\n`;
-    } else if (action.type === 'wallet_connect') {
-      const walletType = action.walletType || 'unknown';
-      test += `${indent}// Wallet connected: ${walletType} (${action.account || 'unknown'})\n`;
+    } else if (action.type === 'extension_connect') {
+      const extensionType = action.extensionType || 'unknown';
+      test += `${indent}// Extension connected: ${extensionType} (${action.account || 'unknown'})\n`;
       test += `${indent}await page.waitForTimeout(2000);\n`;
     }
 
@@ -922,9 +922,9 @@ const CDP_URL = '${CDP_URL}';
   } catch {}
 }
 
-async function cmdWallet(args) {
+async function cmdExt(args) {
   const { browser, context, page } = await connect();
-  const sessionDir = path.join(SESSIONS_DIR, 'wallet');
+  const sessionDir = path.join(SESSIONS_DIR, 'ext');
   fs.mkdirSync(path.join(sessionDir, 'snapshots'), { recursive: true });
   const actionsFile = path.join(sessionDir, 'actions.jsonl');
   fs.writeFileSync(actionsFile, '');
@@ -932,8 +932,8 @@ async function cmdWallet(args) {
   try {
     console.log('[Wally] Connected to Chrome via CDP');
 
-    // Check if any wallet is already connected
-    const walletInfo = await page.evaluate(() => {
+    // Check if any wallet provider is already connected
+    const extInfo = await page.evaluate(() => {
       // EVM wallets
       if (window.ethereum && window.ethereum.selectedAddress) {
         return { type: 'evm', account: window.ethereum.selectedAddress, connected: true };
@@ -949,10 +949,10 @@ async function cmdWallet(args) {
       return { type: null, account: null, connected: false };
     }).catch(() => ({ type: null, account: null, connected: false }));
 
-    if (walletInfo.connected) {
-      console.log(`[Wally] Wallet already connected (${walletInfo.type}: ${walletInfo.account})`);
+    if (extInfo.connected) {
+      console.log(`[Wally] Wallet provider already connected (${extInfo.type}: ${extInfo.account})`);
     } else {
-      console.log('[Wally] Attempting to connect wallet...');
+      console.log('[Wally] Attempting to connect wallet provider...');
 
       // Try to enable any available wallet
       const enabled = await page.evaluate(async () => {
@@ -975,7 +975,7 @@ async function cmdWallet(args) {
       }).catch(() => null);
 
       if (enabled) {
-        console.log(`[Wally] Enabled ${enabled} wallet`);
+        console.log(`[Wally] Enabled ${enabled} provider`);
       }
 
       // Wait for extension to potentially open
@@ -984,8 +984,8 @@ async function cmdWallet(args) {
       // Handle extension if it opened
       const extActions = await handleExtension(context, page, actionsFile);
 
-      // Record the wallet_connect action
-      const connectAction = { ts: new Date().toISOString(), type: 'wallet_connect', walletType: enabled };
+      // Record the extension_connect action
+      const connectAction = { ts: new Date().toISOString(), type: 'extension_connect', extensionType: enabled };
       fs.appendFileSync(actionsFile, JSON.stringify(connectAction) + '\n');
     }
 
@@ -1004,16 +1004,16 @@ async function cmdWallet(args) {
     }).catch(() => ({ connected: false }));
 
     if (finalState.connected) {
-      console.log(`[Wally] Wallet connected: ${finalState.type} (${finalState.account})`);
+      console.log(`[Wally] Wallet provider connected: ${finalState.type} (${finalState.account})`);
     } else {
-      console.log('[Wally] Wallet connection failed or was rejected');
+      console.log('[Wally] Wallet provider connection failed or was rejected');
     }
 
     // Take snapshot
     const snap = await getSnapshot(page);
-    fs.writeFileSync(path.join(sessionDir, 'snapshots', 'wallet.json'), JSON.stringify(snap, null, 2));
+    fs.writeFileSync(path.join(sessionDir, 'snapshots', 'ext.json'), JSON.stringify(snap, null, 2));
 
-    console.log(`\n=== Wallet Status ===`);
+    console.log(`\n=== Extension Status ===`);
     console.log(`Connected: ${finalState.connected}`);
     console.log(`Type: ${finalState.type || 'none'}`);
     console.log(`URL: ${page.url()}`);
@@ -1425,7 +1425,8 @@ async function main() {
       break;
     }
     case 'export': await cmdExport(args.slice(1)); break;
-    case 'wallet': await cmdWallet(args.slice(1)); break;
+    case 'ext': await cmdExt(args.slice(1)); break;
+    case 'wallet': console.log('[Wally] Deprecation: "wallet" is now "ext". Use: wally ext'); await cmdExt(args.slice(1)); break;
     case 'daemon': await cmdDaemon(args.slice(1)); break;
     case 'exec': await cmdExec(args.slice(1)); break;
     case undefined:
@@ -1443,6 +1444,7 @@ Commands:
   wally list                     List records in .records/
   wally snap [--url <url>]       Snapshot current page
   wally export [--output <file>] [--from <dir>]  Export recorded actions → Playwright test
+  wally ext                      Detect and connect wallet providers (EVM/Starknet/Solana)
   wally daemon start [--url <url>] [--profile <name>] [--har] [--har-output <path>]  Background recording
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
