@@ -26,10 +26,11 @@ const fs = require('fs');
 const path = require('path');
 const { createLogger } = require('./lib/logger');
 const { validateFilePath, validateUrl } = require('./lib/validator');
+const { connectCDP, ensureCDP, CDP_URL, CHROME_DEFAULT_PROFILE } = require('./lib/cdp');
+const { generatePlaywrightTest } = require('./lib/generate-test');
 
 const log = createLogger('wally');
 
-const CDP_URL = 'http://127.0.0.1:9222';
 const WALLY_DIR = '/tmp/opencode/wally';
 const SESSIONS_DIR = path.join(WALLY_DIR, 'sessions');
 const RECORDS_DIR = path.join(__dirname, '.records');
@@ -37,8 +38,6 @@ const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || '';
 if (!QA_READY_PASSWORD) {
   console.warn('[Wally] QA_READY_PASSWORD not set — extension password prompts will be skipped');
 }
-const CHROME_DATA_DIR = '/tmp/opencode/chrome-cdp';
-const CHROME_DEFAULT_PROFILE = 'Profile 9';
 
 // ═══════════════════════════════════════════════════════════════════
 // SNAPSHOT — Accessibility snapshot via CDP
@@ -163,132 +162,7 @@ async function getSnapshot(page) {
 // ═══════════════════════════════════════════════════════════════════
 
 async function connect() {
-  const browser = await chromium.connectOverCDP(CDP_URL);
-  const contexts = browser.contexts();
-  const context = contexts.find(c => c.pages().length > 0) || contexts[0];
-  // Find main page (not an extension)
-  const page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
-  return { browser, context, page };
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// CHROME AUTO-LAUNCH — detect CDP, prompt to start if needed
-// ═══════════════════════════════════════════════════════════════════
-
-const http = require('http');
-
-function checkCDP() {
-  return new Promise((resolve) => {
-    http.get(`${CDP_URL}/json/version`, (res) => {
-      let data = '';
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => resolve({ ok: true, data }));
-    }).on('error', () => resolve({ ok: false }));
-  });
-}
-
-function killChrome() {
-  try {
-    const { execSync } = require('child_process');
-    execSync('pkill -9 -f "chrome.*remote-debugging-port"', { stdio: 'ignore' });
-  } catch {}
-}
-
-function setupChromeDataDir(profileName) {
-  const fs = require('fs');
-  fs.mkdirSync(CHROME_DATA_DIR, { recursive: true });
-
-  const srcProfile = path.join(
-    require('os').homedir(),
-    '.config/google-chrome',
-    profileName
-  );
-  const dstProfile = path.join(CHROME_DATA_DIR, profileName);
-
-  // Symlink profile (Chrome resolves user-data-dir but not profile dirs inside)
-  if (!fs.existsSync(dstProfile)) {
-    try { fs.symlinkSync(srcProfile, dstProfile); } catch {}
-  }
-
-  // Copy Local State (needed for profile discovery)
-  const srcLocalState = path.join(require('os').homedir(), '.config/google-chrome', 'Local State');
-  const dstLocalState = path.join(CHROME_DATA_DIR, 'Local State');
-  if (fs.existsSync(srcLocalState) && !fs.existsSync(dstLocalState)) {
-    fs.copyFileSync(srcLocalState, dstLocalState);
-  }
-
-  // Fix broken Service Worker cache symlinks in profile
-  const swCacheDir = path.join(dstProfile, 'Service Worker', 'CacheStorage');
-  if (!fs.existsSync(swCacheDir)) {
-    fs.mkdirSync(swCacheDir, { recursive: true });
-  }
-}
-
-function launchChrome(profileName, url) {
-  setupChromeDataDir(profileName);
-  const flags = [
-    '--remote-debugging-port=9222',
-    `--user-data-dir=${CHROME_DATA_DIR}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-  ];
-  if (url) flags.push(url);
-
-  const { spawn } = require('child_process');
-  const child = spawn('google-chrome', flags, {
-    detached: true,
-    stdio: 'ignore',
-  });
-  child.unref();
-}
-
-async function ensureCDP(profileName, url) {
-  const status = await checkCDP();
-  if (status.ok) return true;
-
-  // Chrome not running — ask to launch
-  const profile = profileName || CHROME_DEFAULT_PROFILE;
-  console.log(`[Wally] Chrome CDP not detected on port 9222.`);
-  const answer = await prompt(`Start Chrome with profile "${profile}"? (Y/n) `);
-  if (answer === 'n' || answer === 'N') {
-    console.log('[Wally] Aborted.');
-    return false;
-  }
-
-  // Kill existing Chrome if any
-  const hasChrome = require('child_process')
-    .execSync('pgrep -f "chrome" || true', { encoding: 'utf8' }).trim();
-  if (hasChrome) {
-    console.log('[Wally] Killing existing Chrome...');
-    killChrome();
-    await new Promise(r => setTimeout(r, 1000));
-  }
-
-  console.log(`[Wally] Starting Chrome with profile "${profile}"...`);
-  launchChrome(profile, url);
-
-  // Wait for CDP to become available (Profile 9 is heavy, needs up to 30s)
-  for (let i = 0; i < 60; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    const check = await checkCDP();
-    if (check.ok) {
-      console.log('[Wally] Chrome CDP ready.');
-      // Give it a moment to settle before daemon attaches
-      await new Promise(r => setTimeout(r, 1500));
-      return true;
-    }
-    if (i % 10 === 9) console.log(`[Wally] Waiting for CDP... ${Math.round((i+1)*0.5)}s`);
-  }
-  console.log('[Wally] Chrome started but CDP not ready after 30s. Retrying once...');
-  // One more try after a short pause
-  await new Promise(r => setTimeout(r, 2000));
-  const finalCheck = await checkCDP();
-  if (finalCheck.ok) {
-    console.log('[Wally] Chrome CDP ready (retry).');
-    return true;
-  }
-  console.log('[Wally] Chrome started but CDP still not ready. Please run wally record again.');
-  return false;
+  return connectCDP();
 }
 
 let _rl = null;
@@ -736,7 +610,7 @@ async function cmdExport(args) {
     process.exit(1);
   }
 
-  // Group actions by page
+  // Group actions by page (for info messages)
   const pages = new Map();
   for (const action of actions) {
     const pageLabel = action.page || 'main';
@@ -744,173 +618,17 @@ async function cmdExport(args) {
     pages.get(pageLabel).push(action);
   }
 
-  // Detect extension ID from recorded actions (if any extension was used)
+  // Detect extension ID for info messages
   let detectedExtId = null;
-  let detectedExtFullId = null;
   for (const action of actions) {
     if (action.url && action.url.includes('chrome-extension://')) {
       const m = action.url.match(/chrome-extension:\/\/([a-z]+)/);
-      if (m) { detectedExtFullId = m[1]; detectedExtId = m[1].substring(0, 8); break; }
-    }
-  }
-  if (!detectedExtFullId) {
-    for (const action of actions) {
-      if (action.page && action.page.startsWith('ext:')) {
-        const match = action.page.match(/ext:(.+)/);
-        if (match) detectedExtId = match[1];
-        break;
-      }
+      if (m) { detectedExtId = m[1].substring(0, 8); break; }
     }
   }
 
-  let test = `/**
- * Auto-generated by Wally
- * Recorded: ${actions[0]?.ts || new Date().toISOString()}
- * Actions: ${actions.length}
- * Pages: ${Array.from(pages.keys()).join(', ')}
- * Extension: ${detectedExtId ? 'detected (' + detectedExtId + ')' : 'none detected'}
- * Run: node playwright.spec.js  (needs Chrome with --remote-debugging-port=9222 and Profile 9)
- */
-const { chromium } = require('playwright');
-const assert = require('assert');
-
-const CDP_URL = '${CDP_URL}';
-
-(async () => {
-  const browser = await chromium.connectOverCDP(CDP_URL);
-  const contexts = browser.contexts();
-  const context = contexts.find(c => c.pages().length > 0) || contexts[0];
-  let page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];
-  let extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));
-`;
-
-  let lastPage = 'main';
-
-  for (const action of actions) {
-    const actionPage = action.page || 'main';
-
-    // If switching to extension page, add page switch logic
-    if (actionPage !== lastPage && actionPage.startsWith('ext:')) {
-      test += `\n  // Switch to extension page (any chrome-extension:// URL)\n`;
-      test += `  extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
-      test += `  if (!extPage) {\n`;
-      test += `    // Wait for extension to open (triggered by prior page click)\n`;
-      test += `    for (let i = 0; i < 15; i++) {\n`;
-      test += `      extPage = context.pages().find(p => p.url().startsWith('chrome-extension://'));\n`;
-      test += `      if (extPage) break;\n`;
-      test += `      console.log('[Wally] Waiting for extension popup...', i);\n`;
-      test += `      await page.waitForTimeout(1000);\n`;
-      test += `    }\n`;
-      test += `  }\n`;
-      if (detectedExtFullId) {
-        test += `  if (!extPage) {\n`;
-        test += `    console.log('[Wally] Extension not auto-opened, opening as tab...');\n`;
-        test += `    extPage = await context.newPage();\n`;
-        test += `    await extPage.goto('chrome-extension://${detectedExtFullId}/index.html', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});\n`;
-        test += `    await extPage.waitForTimeout(2000);\n`;
-        test += `  }\n`;
-      }
-      test += `  if (extPage) {\n`;
-      test += `    await extPage.bringToFront().catch(() => {});\n`;
-      test += `    await extPage.waitForLoadState('domcontentloaded').catch(() => {});\n`;
-      test += `    await extPage.waitForTimeout(1500);\n`;
-      test += `    console.log('[Wally] Extension visible:', extPage.url());\n`;
-      lastPage = actionPage;
-    } else if (actionPage !== lastPage && !actionPage.startsWith('ext:')) {
-      test += `\n    // Switch back to main page\n`;
-      test += `    page = context.pages().find(p => !p.url().startsWith('chrome-extension://')) || context.pages()[0];\n`;
-      test += `    await page.bringToFront().catch(()=>{});\n`;
-      lastPage = actionPage;
-    }
-
-    const isExtAction = action.page && action.page.startsWith('ext:');
-    const indent = isExtAction ? '    ' : '  ';
-
-    if (action.type === 'navigate') {
-      const navTarget = isExtAction ? 'extPage' : 'page';
-      test += `${indent}await ${navTarget}.goto('${action.url}', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>{});\n`;
-      test += `${indent}await ${navTarget}.waitForTimeout(2000);\n`;
-    } else if (action.type === 'click') {
-      const sel = action.selector;
-      const target = isExtAction ? 'extPage' : 'page';
-      // Password inputs are optional (extension may already be unlocked)
-      if (sel.includes('password')) {
-        test += `${indent}{ const _pw = ${target}.locator('${sel}').first(); if (await _pw.isVisible().catch(()=>false)) await _pw.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip password click not visible'); }\n`;
-      } else       if (sel.startsWith('[data-testid=') || sel.startsWith('#') || sel.startsWith('[aria-label=')) {
-        // data-testid clicks are often one-time (unlock, network switch) — make optional
-        test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) await _el.click({ force: true, timeout: 5000 }); else console.log('[Wally] Skip not visible: ${sel}'); }\n`;
-      } else if (sel.startsWith('button "') || sel.startsWith('link "')) {
-        // Text-based selector — OK/Close/Cancel are often one-time modals, make optional
-        const text = sel.match(/"(.+)"/)?.[1] || sel;
-        const role = sel.split(' ')[0];
-        const isOptional = /^(OK|Close|Cancel|Dismiss)$/i.test(text.trim());
-        if (isOptional) {
-          const v = `_btn${Math.random().toString(36).substring(2,4)}`;
-          test += `${indent}{ const ${v} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/i }).first(); if (await ${v}.isVisible().catch(()=>false)) await ${v}.click({ timeout: 5000 }); else console.log('[Wally] Skip optional button not visible: ' + ${JSON.stringify(text)}); }\n`;
-        } else {
-          const v2 = `_btn${Math.random().toString(36).substring(2,4)}`;
-          test += `${indent}{ const ${v2} = ${target}.getByRole('${role}', { name: /${text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}/i }).first(); if (await ${v2}.isVisible().catch(()=>false)) { try { await ${v2}.click({ timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip button not visible: ' + ${JSON.stringify(text)}); } }\n`;
-        }
-      } else if (sel.includes(' > ') || sel.includes(':nth-child') || sel.startsWith('div') || sel.startsWith('span') || sel.startsWith('p') || sel === 'html' || sel === 'body') {
-        // CSS path (fallback nth-child) — fragile and often non-interactive (loading overlays, error messages)
-        const text = action.text || '';
-        const extensionKeywords = ['Ready', 'Argent', 'Braavos', 'Wallet', 'Carrot', 'STRK', 'Connect'];
-        const isExtensionOption = extensionKeywords.some(k => text.includes(k));
-        const isErrorOverlay = text.includes('Contrase') || text.includes('Loading') || text.includes('Bloq May') || text.includes('Desbloque');
-        const isTextOnly = (sel === 'p' || sel.endsWith(' > p') || (sel.endsWith(' > span') && !sel.includes('button') && !sel.includes('a'))) && text.length > 15 && !isExtensionOption;
-        if (isTextOnly || isErrorOverlay) {
-          test += `${indent}// Skipped non-interactive: ${sel} "${text.substring(0, 40).replace(/'/g, "\\'").replace(/\n/g,' ')}"\n`;
-        } else if (isExtensionOption && text) {
-          const escText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').substring(0, 30);
-          const varName = `_ext_${Math.random().toString(36).substring(2,6)}`;
-          test += `${indent}{ const ${varName} = ${target}.getByText(/${escText}/i).first(); if (await ${varName}.isVisible().catch(()=>false)) { try { await ${varName}.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Extension click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip extension selector not visible: ' + ${JSON.stringify(escText)}); } }\n`;
-        } else {
-          // Robust: wait for visible with longer timeout for network/latency, skip if not found
-          test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { await _el.click({ force: true, timeout: 10000 }); } else { console.log('[Wally] Skip not visible (fragile): ${sel}'); } }\n`;
-        }
-      } else if (sel.startsWith('input[') || sel.startsWith('textarea[')) {
-        // Input/textarea selectors — make optional (page may not have loaded, or name changed)
-        test += `${indent}{ const _inp = ${target}.locator('${sel}').first(); if (await _inp.isVisible().catch(()=>false)) { try { await _inp.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Input click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip input not visible: ${sel}'); } }\n`;
-      } else {
-        test += `${indent}{ const _el = ${target}.locator('${sel}').first(); if (await _el.isVisible().catch(()=>false)) { try { await _el.click({ force: true, timeout: 10000 }); } catch(e) { console.log('[Wally] Click failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip not visible: ${sel}'); } }\n`;
-      }
-      test += `${indent}await page.waitForTimeout(1000);\n`;
-    } else if (action.type === 'fill') {
-      const escaped = (action.value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-      const target = (lastPage.startsWith('ext:') && lastPage !== 'main') ? 'extPage' : 'page';
-      // All fills are optional — page may not have loaded, or element may be transient
-      test += `${indent}{ const _fill = ${target}.locator('${action.selector}').first(); if (await _fill.isVisible().catch(()=>false)) { try { await _fill.fill('${escaped}'); } catch(e) { console.log('[Wally] Fill failed (continuing):', e.message.split(String.fromCharCode(10))[0]); } } else { console.log('[Wally] Skip fill not visible: ${action.selector}'); } }\n`;
-      test += `${indent}await page.waitForTimeout(500);\n`;
-    } else if (action.type === 'extension_connect') {
-      const extensionType = action.extensionType || 'unknown';
-      test += `${indent}// Extension connected: ${extensionType} (${action.account || 'unknown'})\n`;
-      test += `${indent}await page.waitForTimeout(2000);\n`;
-    }
-
-    // Close extension block if next action is on main page
-    const nextAction = actions[actions.indexOf(action) + 1];
-    const nextPage = nextAction ? (nextAction.page || 'main') : null;
-    if (nextAction && lastPage.startsWith('ext:') && nextPage && !nextPage.startsWith('ext:')) {
-      test += `  }\n\n`;
-    }
-  }
-
-  // Close any open extension block
-  if (lastPage.startsWith('ext:')) {
-    test += `  }\n`;
-  }
-
-  test += `  console.log('[Wally] Replay done, final URL:', page.url());\n`;
-  test += `  if (extPage) {\n`;
-  test += `    console.log('[Wally] Extension final URL:', extPage.url());\n`;
-  test += `    await extPage.bringToFront().catch(() => {});\n`;
-  test += `  } else {\n`;
-  test += `    await page.bringToFront().catch(() => {});\n`;
-  test += `  }\n`;
-  test += `  console.log('[Wally] Keeping browser open 10s for visual check...');\n`;
-  test += `  await page.waitForTimeout(10000);\n`;
-  test += `  await browser.close();\n`;
-  test += `})().catch(e => { console.error(e); process.exit(1); });\n`;
+  // Generate test using shared module
+  const test = generatePlaywrightTest(actions);
 
   const outputPath = path.resolve(outputFile);
   fs.writeFileSync(outputPath, test);
