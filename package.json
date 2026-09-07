@@ -13,7 +13,9 @@
     "daemon": "node wally.js daemon",
     "ext": "node wally.js ext",
     "export": "node wally.js export",
-    "test": "node wally.js snap"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [
     "browser-automation",
@@ -33,5 +35,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^5.0.0",
+    "vitest": "^5.0.0"
   }
 }
