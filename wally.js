@@ -1387,30 +1387,48 @@ Wally — Interactive
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// SKILL GENERATOR — exports Agent Skills format for AI agents
+// CREATE-SKILL — generates Agent Skill from a recorded session
 // ═══════════════════════════════════════════════════════════════════
 
-async function cmdSkill(args) {
-  const outDir = getArg(args, '--output') || './skills';
-  const fromDir = getArg(args, '--from');
-  const skillName = getArg(args, '--name');
+async function cmdCreateSkill(args) {
+  // Find session: accept dir path or session ID
+  let sessionArg = args.find(a => !a.startsWith('-'));
+  let sessionDir;
 
-  // MODE 1: Generate skill from a recorded session
-  if (fromDir) {
-    await cmdSkillFromSession(fromDir, outDir, skillName);
+  if (!sessionArg) {
+    // Auto-detect: use latest session
+    const sessions = fs.existsSync(RECORDS_DIR)
+      ? fs.readdirSync(RECORDS_DIR).filter(d => fs.statSync(path.join(RECORDS_DIR, d)).isDirectory()).sort().reverse()
+      : [];
+    if (sessions.length === 0) {
+      console.log(`[Wally] No recorded sessions found in ${RECORDS_DIR}`);
+      console.log(`[Wally] Usage: wally create-skill <session-id-or-path>`);
+      return;
+    }
+    sessionArg = sessions[0];
+    console.log(`[Wally] Using latest session: ${sessionArg}`);
+  }
+
+  // Resolve session directory
+  if (fs.existsSync(sessionArg) && fs.existsSync(path.join(sessionArg, 'actions.jsonl'))) {
+    sessionDir = sessionArg;
+  } else if (fs.existsSync(path.join(RECORDS_DIR, sessionArg))) {
+    sessionDir = path.join(RECORDS_DIR, sessionArg);
+  } else {
+    console.log(`[Wally] Error: Session not found: ${sessionArg}`);
+    console.log(`[Wally] Usage: wally create-skill <session-id>`);
+    console.log(`[Wally] Available sessions:`);
+    const sessions = fs.existsSync(RECORDS_DIR)
+      ? fs.readdirSync(RECORDS_DIR).filter(d => fs.statSync(path.join(RECORDS_DIR, d)).isDirectory()).sort().reverse()
+      : [];
+    sessions.forEach(s => console.log(`  ${s}`));
     return;
   }
 
-  // MODE 2: Generate generic Wally usage skill
-  await cmdSkillGeneric(outDir, skillName || 'wally-record');
-}
-
-async function cmdSkillFromSession(fromDir, outDir, skillName) {
   // Find actions.jsonl
-  const actionsFile = path.join(fromDir, 'actions.jsonl');
+  const actionsFile = path.join(sessionDir, 'actions.jsonl');
   if (!fs.existsSync(actionsFile)) {
-    console.log(`[Wally] Error: actions.jsonl not found in ${fromDir}`);
-    console.log(`[Wally] Usage: wally skill --from .records/<session-dir>`);
+    console.log(`[Wally] Error: actions.jsonl not found in ${sessionDir}`);
     return;
   }
 
@@ -1424,7 +1442,7 @@ async function cmdSkillFromSession(fromDir, outDir, skillName) {
   }
 
   // Read Playwright test if it exists
-  const testFile = path.join(fromDir, 'playwright.spec.js');
+  const testFile = path.join(sessionDir, 'playwright.spec.js');
   const testCode = fs.existsSync(testFile) ? fs.readFileSync(testFile, 'utf8') : null;
 
   // Detect pages and extensions
@@ -1449,26 +1467,26 @@ async function cmdSkillFromSession(fromDir, outDir, skillName) {
     }
   });
 
-  // Generate skill name from session
-  const autoName = skillName || `wally-session-${path.basename(fromDir)}`;
-  const skillDir = path.join(outDir, autoName);
+  // Generate skill name and directory inside the session
+  const sessionId = path.basename(sessionDir);
+  const skillDir = path.join(sessionDir, 'skill');
   fs.mkdirSync(skillDir, { recursive: true });
 
   // Generate SKILL.md
   const skillContent = `---
-name: ${autoName}
+name: wally-${sessionId}
 description: "Trigger: replay recorded flow, run recorded workflow, execute recorded session. Replay a browser workflow recorded with Wally (${actions.length} actions across ${pages.size} pages)."
 license: BSD-3-Clause
 metadata:
   author: "cxto21"
   version: "1.0"
   source: "wally-recorded-session"
-  session: "${path.basename(fromDir)}"
+  session: "${sessionId}"
   actions: "${actions.length}"
   pages: "${Array.from(pages).join(', ')}"
 ---
 
-# Recorded Workflow: ${path.basename(fromDir)}
+# Recorded Workflow: ${sessionId}
 
 This skill replays a browser workflow recorded with Wally.
 
@@ -1497,7 +1515,7 @@ ${actionSummary.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 google-chrome --remote-debugging-port=9222
 
 # Run the test
-node playwright.spec.js
+node skill/playwright.spec.js
 \`\`\`
 
 ### Option B: Replay with Wally
@@ -1507,13 +1525,13 @@ node playwright.spec.js
 google-chrome --remote-debugging-port=9222
 
 # Replay the recorded session
-node wally.js play ${path.basename(fromDir)}
+node wally.js play ${sessionId}
 \`\`\`
 
 ## Generated Playwright Test
 
 \`\`\`javascript
-${testCode || '// Test not available — run: wally export --from ' + fromDir}
+${testCode || '// Test not available — run: wally export'}
 \`\`\`
 
 ## Agent Instructions
@@ -1534,11 +1552,8 @@ To replay this workflow:
     fs.writeFileSync(path.join(skillDir, 'playwright.spec.js'), testCode);
   }
 
-  // Copy actions.jsonl for reference
-  fs.copyFileSync(actionsFile, path.join(skillDir, 'actions.jsonl'));
-
-  console.log(`[Wally] Skill generated from session: ${skillDir}/`);
-  console.log(`[Wally] Name: ${autoName}`);
+  console.log(`[Wally] Skill created: ${skillDir}/`);
+  console.log(`[Wally] Session: ${sessionId}`);
   console.log(`[Wally] Actions: ${actions.length}, Pages: ${pages.size}`);
   console.log(`[Wally] Compatible with: OpenCode, Claude Code, Cursor, VS Code, Gemini CLI, and 40+ agents`);
 }
@@ -1735,7 +1750,7 @@ async function main() {
     case 'wallet': console.log('[Wally] Deprecation: "wallet" is now "ext". Use: wally ext'); await cmdExt(args.slice(1)); break;
     case 'daemon': await cmdDaemon(args.slice(1)); break;
     case 'exec': await cmdExec(args.slice(1)); break;
-    case 'skill': await cmdSkill(args.slice(1)); break;
+    case 'create-skill': await cmdCreateSkill(args.slice(1)); break;
     case undefined:
     case 'interactive':
       await cmdInteractive();
@@ -1755,7 +1770,7 @@ Commands:
   wally daemon stop              Stop daemon
   wally daemon status            Show active pages + action counts
   wally exec "<code>" [--page <ext|main>] [--snapshot] [--timeout <ms>] [--file <path>]  Execute Playwright JS live
-  wally skill [--name <name>] [--output <dir>] [--from <dir>]  Generate Agent Skill (generic or from recorded session)
+  wally create-skill [session-id]      Generate Agent Skill from recorded session
 
 Options:
   --profile <name>  Chrome profile (default: "Profile 9")
