@@ -31,7 +31,7 @@ const { generatePlaywrightTest } = require('./lib/generate-test');
 
 const log = createLogger('wally');
 
-const WALLY_DIR = '/tmp/opencode/wally';
+const WALLY_DIR = process.env.WALLY_DIR || '/tmp/opencode/wally';
 const SESSIONS_DIR = path.join(WALLY_DIR, 'sessions');
 const RECORDS_DIR = path.join(__dirname, '.records');
 const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || '';
@@ -207,7 +207,7 @@ function ask(question) {
   }
   return new Promise(resolve => getRL().question(question, ans => resolve(ans)));
 }
-function closeRL() { try { if (_rl) _rl.close(); } catch {} _rl = null; }
+function closeRL() { try { if (_rl) _rl.close(); } catch (e) { log.debug(`closeRL: ${e.message}`); } _rl = null; }
 
 function normalizeUrl(input) {
   const t = (input || '').trim();
@@ -324,7 +324,7 @@ async function cmdSnap(args) {
   console.log(snap.compact);
   console.log(`\nSaved: ${sessionDir}/snapshots/${snapId}.json`);
 
-  try { browser.close(); } catch {}
+  try { browser.close(); } catch (e) { log.debug(`cmdSnap browser.close: ${e.message}`); }
 }
 
 async function cmdRecord(args) {
@@ -522,7 +522,7 @@ async function cmdRecord(args) {
             console.log(`[Wally] Extension connect: ${action.account}`);
           }
         }
-      } catch {}
+      } catch (e) { log.debug(`record poll error: ${e.message}`); }
     }, 500);
 
     // Take initial snapshot
@@ -552,7 +552,7 @@ async function cmdRecord(args) {
     console.log(`[Wally] 🔴 Recording stopped. ${lines.length} actions captured.`);
 
     if (global.__wally_cdp) await global.__wally_cdp.detach().catch(() => {});
-    try { browser.close(); } catch {}
+    try { browser.close(); } catch (e) { log.debug(`cmdRecord browser.close: ${e.message}`); }
   }
 }
 
@@ -646,7 +646,7 @@ async function cmdExport(args) {
     }
     const cleanNet = path.join(RECORDS_DIR, path.basename(sessionDir), 'network.har');
     if (fs.existsSync(cleanNet)) console.log(`[Wally] Network HAR (clean): ${cleanNet}`);
-  } catch {}
+  } catch (e) { log.debug(`cmdExport network report: ${e.message}`); }
 
   // Also copy to clean .records/<sessionId>/ for visibility
   try {
@@ -658,7 +658,7 @@ async function cmdExport(args) {
     }
     fs.writeFileSync(path.join(cleanDir, 'playwright.spec.js'), test);
     console.log(`[Wally] Clean copy → ${cleanDir}/ (actions.jsonl + playwright.spec.js)`);
-  } catch {}
+  } catch (e) { log.debug(`cmdExport clean copy: ${e.message}`); }
 }
 
 async function cmdExt(args) {
@@ -759,7 +759,7 @@ async function cmdExt(args) {
     console.log(snap.compact);
 
   } finally {
-    try { browser.close(); } catch {}
+    try { browser.close(); } catch (e) { log.debug(`cmdExt browser.close: ${e.message}`); }
   }
 }
 
@@ -828,7 +828,7 @@ Examples:
   } else {
     // Try stdin if no args
     if (!process.stdin.isTTY) {
-      try { code = fs.readFileSync(0, 'utf8'); } catch {}
+      try { code = fs.readFileSync(0, 'utf8'); } catch (e) { log.debug(`stdin read: ${e.message}`); }
       if (!code || !code.trim()) code = null;
     }
     // Fallback: also check getStdinLines (existing helper for piped input)
@@ -863,7 +863,7 @@ Examples:
       else {
         console.error('[Wally Exec] No extension page found. Available pages:');
         context.pages().forEach(p => console.error('  -', p.url()));
-        try { await browser.close(); } catch {}
+        try { await browser.close(); } catch (e) { log.debug(`cmdExec ext page close: ${e.message}`); }
         process.exit(1);
       }
     } else if (pageTarget !== 'main') {
@@ -890,7 +890,7 @@ Examples:
     } catch (e) {
       console.error('[Wally Exec] Syntax error in code:');
       console.error(e.stack || e.message);
-      try { browser.close().catch(()=>{}); } catch {}
+      try { browser.close().catch(()=>{}); } catch (e2) { log.debug(`cmdExec syntax error close: ${e2.message}`); }
       closeRL();
       process.exit(1);
     }
@@ -909,7 +909,7 @@ Examples:
     if (execError) {
       console.error('[Wally Exec] Error:');
       console.error(execError.stack || execError.message);
-      try { browser.close().catch(()=>{}); } catch {}
+      try { browser.close().catch(()=>{}); } catch (e2) { log.debug(`cmdExec exec error close: ${e2.message}`); }
       closeRL();
       process.exit(1);
     }
@@ -935,7 +935,7 @@ Examples:
     }
 
     // Detach without awaiting hang (Playwright connectOverCDP close can hang)
-    try { browser.close().catch(()=>{}); } catch {}
+    try { browser.close().catch(()=>{}); } catch (e) { log.debug(`cmdExec final close: ${e.message}`); }
     closeRL();
     // Force exit to avoid hanging WS handles (Playwright connectOverCDP)
     setTimeout(()=>process.exit(0), 100);
@@ -945,7 +945,7 @@ Examples:
     console.error(e.stack || e.message);
     console.error(`\nMake sure Chrome is running with --remote-debugging-port=9222`);
     console.error(`CDP URL: ${CDP_URL}`);
-    try { if (browser) browser.close().catch(()=>{}); } catch {}
+    try { if (browser) browser.close().catch(()=>{}); } catch (e2) { log.debug(`cmdExec connect fail close: ${e2.message}`); }
     closeRL();
     process.exit(1);
   }
@@ -1072,7 +1072,7 @@ async function cmdPlay(args) {
       const last = lines.length ? JSON.parse(lines[lines.length-1]) : {};
       const pages = [...new Set(lines.map(l => { try { return JSON.parse(l).page || 'main'; } catch { return 'main'; } }))].join(', ');
       info = `${lines.length} actions | ${pages} | ${first.ts ? new Date(first.ts).toLocaleString() : ''}`;
-    } catch {}
+    } catch (e) { log.debug(`cmdPlay info read: ${e.message}`); }
     console.log(`  ${idx + 1}) ${id}  — ${info}`);
   });
 
@@ -1194,7 +1194,7 @@ async function cmdCreateSkill(args) {
         const first = lines.length ? JSON.parse(lines[0]) : {};
         const pages = [...new Set(lines.map(l => { try { return JSON.parse(l).page || 'main'; } catch { return 'main'; } }))].join(', ');
         info = `${lines.length} actions | ${pages} | ${first.ts ? new Date(first.ts).toLocaleString() : ''}`;
-      } catch {}
+      } catch (e) { log.debug(`cmdCreateSkill info read: ${e.message}`); }
       const skillMark = hasSkill ? ' [skill]' : '';
       console.log(`  ${idx + 1}) ${id}  — ${info}${skillMark}`);
     });
