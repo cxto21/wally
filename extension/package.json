@@ -1,0 +1,11 @@
+{
+  "name": "wally-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Wally browser interaction recorder extension",
+  "license": "MIT",
+  "scripts": {
+    "zip": "rm -f wally-extension.zip && zip -r wally-extension.zip manifest.json src icons LICENSE -x '*.DS_Store'"
+  }
+}

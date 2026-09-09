@@ -66,3 +66,33 @@ node wally.js daemon status   # shows network events count
 - Node.js ≥18
 - `playwright` npm package
 - Google Chrome
+
+## Wally Extension (Beta)
+
+Record browser interactions without CDP flags — just install the extension and click Record.
+
+### Install (Developer)
+1. Clone this repo
+2. Open `chrome://extensions`
+3. Enable Developer mode
+4. Load unpacked → select the `extension/` directory
+5. Pin the Wally icon
+
+### Usage
+1. Click the Wally icon or press `Ctrl+E` to open the side panel
+2. Click **Start Recording**
+3. Use your browser normally — Wally captures interactions
+4. Click **Stop Recording** when done
+5. Sessions auto-sync to Wally CLI via bridge, or download manually
+
+### Bridge Mode (Auto-Sync)
+```bash
+wally bridge start    # Start bridge server
+# Extension sessions auto-sync to .records/
+wally create-skill    # Generate skill from recorded session
+```
+
+### Limitations
+- Cannot record `chrome://`, Chrome Web Store, or PDF pages
+- Extension popups require debugger permission (shows Chrome banner)
+- Shadow DOM elements may not be captured

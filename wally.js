@@ -33,6 +33,7 @@ const { validateFilePath, validateUrl } = require('./lib/validator');
 const { connectCDP, ensureCDP, CDP_URL, CHROME_DEFAULT_PROFILE } = require('./lib/cdp');
 const { generatePlaywrightTest } = require('./lib/generate-test');
 const { WallyDaemon } = require('./lib/daemon');
+const { createServer: createBridgeServer, materializeSession, HOST } = require('./lib/bridge');
 
 const log = createLogger('wally');
 
@@ -1171,6 +1172,235 @@ function getArg(args, name) {
 }
 
 /**
+ * Execute the `bridge` command — start bridge server for extension recording.
+ *
+ * @param {string[]} args - CLI args (supports 'start' subcommand, --port, --help)
+ * @returns {Promise<void>}
+ */
+async function cmdBridge(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Wally Bridge — Start bridge server for extension recording
+
+Usage:
+  wally bridge start [--port <port>]   Start bridge server
+  wally bridge --help                  Show this help
+
+Options:
+  --port <port>  Port to listen on (default: random available port)
+
+The bridge server receives recorded sessions from the Wally browser
+extension and materializes them into .records/<id>/ for the CLI.
+
+The server binds to 127.0.0.1 only (no external access).
+A random auth token is printed on start — the extension needs it.
+
+Examples:
+  wally bridge start                Start on random port
+  wally bridge start --port 9229    Start on specific port
+`);
+    return;
+  }
+
+  const sub = args[0];
+  if (sub !== 'start') {
+    console.error('[Wally] Usage: wally bridge start [--port <port>]');
+    console.error('Run "wally bridge --help" for usage');
+    process.exit(1);
+  }
+
+  // Parse port
+  let port = parseInt(getArg(args, '--port'), 10);
+  if (!port || port < 1024 || port > 65535) {
+    port = 0; // 0 = let OS pick random available port
+  }
+
+  const { server, token } = createBridgeServer(port);
+
+  server.listen(port, HOST, () => {
+    const actualPort = server.address().port;
+    console.log(`[Wally Bridge] Listening on http://${HOST}:${actualPort}`);
+    console.log(`[Wally Bridge] Token: ${token}`);
+    console.log(`[Wally Bridge] Extension config: port=${actualPort}, token=${token}`);
+    console.log(`[Wally Bridge] Press Ctrl+C to stop`);
+
+    // Save token to temp file for debugging
+    try {
+      const tmpDir = path.join(WALLY_DIR, 'bridge');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      const tokenFile = path.join(tmpDir, 'last-token.txt');
+      fs.writeFileSync(tokenFile, JSON.stringify({ port: actualPort, token }, null, 2));
+      console.log(`[Wally Bridge] Token saved: ${tokenFile}`);
+    } catch (e) {
+      log.debug(`bridge token file: ${e.message}`);
+    }
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[Wally Bridge] Port ${port} already in use. Try --port <other> or omit for random.`);
+    } else {
+      console.error(`[Wally Bridge] Error: ${err.message}`);
+    }
+    process.exit(1);
+  });
+
+  // Graceful shutdown
+  function shutdown() {
+    console.log('\n[Wally Bridge] Shutting down...');
+    server.close(() => {
+      console.log('[Wally Bridge] Stopped');
+      process.exit(0);
+    });
+    // Force exit after 2s if close hangs
+    setTimeout(() => process.exit(0), 2000);
+  }
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+/**
+ * Execute the `import` command — import a recorded session from file.
+ *
+ * @param {string[]} args - CLI args (expects <file> argument or --dir, --help)
+ * @returns {Promise<void>}
+ */
+async function cmdImport(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Wally Import — Import a recorded session from file
+
+Usage:
+  wally import <file>          Import a single JSONL or JSON file
+  wally import --dir <dir>     Import all sessions from a directory
+  wally import --help          Show this help
+
+Options:
+  --dir <dir>  Import all .jsonl and .json files from directory
+
+File formats:
+  JSONL — one JSON action per line (actions.jsonl format)
+  JSON  — bundled session: { "actions": [...], "startUrl": "...", ... }
+
+Each imported session is materialized into .records/<id>/ with
+actions.jsonl + metadata.json.
+
+Examples:
+  wally import recording.jsonl           Import single file
+  wally import session.json              Import bundled JSON
+  wally import --dir ./downloads         Import all from directory
+`);
+    return;
+  }
+
+  const dir = getArg(args, '--dir');
+
+  if (dir) {
+    // Import all sessions from directory
+    if (!fs.existsSync(dir)) {
+      console.error(`[Wally] Directory not found: ${dir}`);
+      process.exit(1);
+    }
+    const files = fs.readdirSync(dir).filter(f =>
+      f.endsWith('.jsonl') || f.endsWith('.json')
+    );
+    if (files.length === 0) {
+      console.error(`[Wally] No .jsonl or .json files found in ${dir}`);
+      process.exit(1);
+    }
+    console.log(`[Wally] Found ${files.length} file(s) in ${dir}`);
+    let imported = 0;
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      try {
+        const result = importFile(filePath);
+        imported++;
+        console.log(`[Wally] Imported: ${file} → ${result.sessionId} (${result.actions} actions)`);
+      } catch (e) {
+        console.error(`[Wally] Failed to import ${file}: ${e.message}`);
+      }
+    }
+    console.log(`[Wally] Imported ${imported}/${files.length} sessions`);
+    return;
+  }
+
+  // Single file import
+  const file = args.filter(a => !a.startsWith('-'))[0];
+  if (!file) {
+    console.error('[Wally] Usage: wally import <file> or wally import --dir <dir>');
+    console.error('Run "wally import --help" for usage');
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(file)) {
+    console.error(`[Wally] File not found: ${file}`);
+    process.exit(1);
+  }
+
+  try {
+    const result = importFile(file);
+    console.log(`[Wally] Imported: ${file}`);
+    console.log(`[Wally] Session: ${result.sessionId}`);
+    console.log(`[Wally] Actions: ${result.actions}`);
+    console.log(`[Wally] Path: ${result.path}`);
+  } catch (e) {
+    console.error(`[Wally] Import failed: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Import a single file (JSONL or bundled JSON) into .records/.
+ *
+ * @param {string} filePath - Path to the file
+ * @returns {{ sessionId: string, path: string, actions: number }}
+ */
+function importFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const content = fs.readFileSync(filePath, 'utf8').trim();
+
+  if (!content) {
+    throw new Error('File is empty');
+  }
+
+  let session;
+
+  if (ext === '.jsonl') {
+    // JSONL: one JSON action per line
+    const lines = content.split('\n').filter(Boolean);
+    const actions = lines.map((line, i) => {
+      try {
+        return JSON.parse(line);
+      } catch (e) {
+        throw new Error(`Invalid JSON on line ${i + 1}: ${e.message}`);
+      }
+    });
+    session = { actions };
+  } else if (ext === '.json') {
+    // Bundled JSON
+    try {
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) {
+        // Array of actions (treat as actions-only)
+        session = { actions: parsed };
+      } else if (parsed.actions && Array.isArray(parsed.actions)) {
+        // Full session bundle
+        session = parsed;
+      } else {
+        throw new Error('JSON must be an array of actions or { actions: [...] }');
+      }
+    } catch (e) {
+      if (e.message.includes('JSON must be')) throw e;
+      throw new Error(`Invalid JSON: ${e.message}`);
+    }
+  } else {
+    throw new Error(`Unsupported file extension: ${ext} (use .jsonl or .json)`);
+  }
+
+  return materializeSession(session);
+}
+
+/**
  * Execute the `play` command — replay a saved recording.
  * Shows an interactive selector or plays a specific record by index.
  *
@@ -1708,6 +1938,8 @@ async function main() {
     case 'ext': await cmdExt(args.slice(1)); break;
     case 'wallet': console.log('[Wally] Deprecation: "wallet" is now "ext". Use: wally ext'); await cmdExt(args.slice(1)); break;
     case 'daemon': await cmdDaemon(args.slice(1)); break;
+    case 'bridge': await cmdBridge(args.slice(1)); break;
+    case 'import': await cmdImport(args.slice(1)); break;
     case 'exec': await cmdExec(args.slice(1)); break;
     case 'create-skill': await cmdCreateSkill(args.slice(1)); break;
     case undefined:
@@ -1732,6 +1964,8 @@ Commands:
   wally daemon status            Show active pages + action counts
   wally exec "<code>" [--page <ext|main>] [--snapshot] [--timeout <ms>] [--file <path>]  Execute Playwright JS live
   wally create-skill [-c] [session-id]  Generate Agent Skill from recorded session
+  wally bridge start             Start bridge server for extension recording
+  wally import <file>            Import a recorded session from file
 
 record vs daemon:
   Both record browser interactions, but serve different use cases:
