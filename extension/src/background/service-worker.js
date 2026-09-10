@@ -276,6 +276,18 @@ async function startRecording(url) {
   // actual actions will be part of replay (idle tabs with 0 actions are ignored)
   await sweepAndInjectAllTabs();
 
+  // Clear any pre-existing actions that happened before Start (avoid
+  // capturing stale window.__wally_actions from pages loaded before recording)
+  for (const [tid] of trackedTabs) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tid, allFrames: false },
+        world: 'MAIN',
+        func: () => { window.__wally_actions = []; },
+      });
+    } catch {}
+  }
+
   console.log(`[Wally] Recording started: ${session.id} (tab ${tab.id})`);
   return true;
 }
