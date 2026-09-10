@@ -12,6 +12,9 @@ const logSection = document.getElementById('logSection');
 const logEl = document.getElementById('log');
 const actionCountEl = document.getElementById('actionCount');
 const sessionsEl = document.getElementById('sessions');
+const bridgeStatusEl = document.getElementById('bridgeStatus');
+const bridgeBadgeEl = document.getElementById('bridgeBadge');
+const bridgeNoticeEl = document.getElementById('bridgeNotice');
 
 let recording = false;
 let lastSessionId = null;
@@ -30,6 +33,7 @@ chrome.runtime.sendMessage({ type: 'get_status' }, (res) => {
 });
 
 loadSessions();
+checkBridgeStatus();
 
 // ═══════════════════════════════════════════════════════════════
 // RECORD / STOP
@@ -293,6 +297,39 @@ function replaySession(sessionId) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// REPLAY ERRORS — listen for errors from service worker
+// ═══════════════════════════════════════════════════════════════
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'replay_error') {
+    appendReplayError(message);
+  }
+});
+
+function appendReplayError(entry) {
+  const errorDiv = document.createElement('div');
+  errorDiv.className = 'log-entry replay-error';
+
+  const time = new Date(entry.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  let detail = '';
+  if (entry.action) {
+    const label = entry.action.text
+      ? `"${entry.action.text.substring(0, 40)}"`
+      : entry.action.selector || '';
+    detail = `${entry.action.type} ${label}`;
+  }
+
+  errorDiv.innerHTML = `<span class="time">${time}</span> <span class="type error">FAIL</span> <span class="detail">${escapeHtml(detail)}</span> <span class="error-msg">${escapeHtml(entry.error)}</span>`;
+
+  logEl.appendChild(errorDiv);
+  logEl.scrollTop = logEl.scrollHeight;
+
+  // Show log section if hidden during replay
+  logSection.style.display = 'block';
+}
+
+// ═══════════════════════════════════════════════════════════════
 // STORAGE LISTENER — update UI on state changes
 // ═══════════════════════════════════════════════════════════════
 
@@ -306,3 +343,41 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// BRIDGE STATUS — check connectivity and show badge
+// ═══════════════════════════════════════════════════════════════
+
+async function checkBridgeStatus() {
+  try {
+    const data = await chrome.storage.local.get(['wally-bridge-port', 'wally-bridge-token']);
+    const port = data['wally-bridge-port'];
+    const token = data['wally-bridge-token'];
+
+    if (!port || !token) {
+      showBridgeStatus(false);
+      return;
+    }
+
+    const res = await fetch(`http://127.0.0.1:${port}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(2000),
+    });
+    showBridgeStatus(res.ok);
+  } catch {
+    showBridgeStatus(false);
+  }
+}
+
+function showBridgeStatus(connected) {
+  bridgeStatusEl.style.display = 'flex';
+  if (connected) {
+    bridgeBadgeEl.textContent = 'Bridge connected';
+    bridgeBadgeEl.className = 'bridge-badge connected';
+    bridgeNoticeEl.style.display = 'none';
+  } else {
+    bridgeBadgeEl.textContent = 'Web-only';
+    bridgeBadgeEl.className = 'bridge-badge web-only';
+    bridgeNoticeEl.style.display = 'inline';
+  }
+}

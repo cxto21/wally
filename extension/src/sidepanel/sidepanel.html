@@ -130,6 +130,19 @@
     }
     .log-entry .time { color: #555; }
     .log-entry .detail { color: #777; }
+    .log-entry.replay-error { color: #ff6b6b; }
+    .log-entry.replay-error .type.error {
+      color: #ff4444;
+      font-weight: 700;
+    }
+    .log-entry.replay-error .error-msg {
+      color: #ff8888;
+      font-size: 10px;
+      display: block;
+      margin-left: 60px;
+      margin-top: 2px;
+      word-break: break-word;
+    }
 
     /* Sessions */
     .sessions { margin-top: 12px; }
@@ -160,6 +173,37 @@
     }
     .session-btn.export { background: #4a9eff; color: white; }
     .session-btn.delete { background: #ff4444; color: white; }
+
+    /* Bridge status */
+    .bridge-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      font-size: 11px;
+    }
+    .bridge-badge {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .bridge-badge.connected {
+      background: #1a3d1a;
+      color: #4caf50;
+      border: 1px solid #2d5a2d;
+    }
+    .bridge-badge.web-only {
+      background: #3d3d1a;
+      color: #ffc107;
+      border: 1px solid #5a5a2d;
+    }
+    .bridge-notice {
+      color: #888;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -179,6 +223,12 @@
   <div id="status" class="status idle">
     <span class="dot"></span>
     <span id="statusText">Ready to record</span>
+  </div>
+
+  <!-- Bridge status badge -->
+  <div id="bridgeStatus" class="bridge-status" style="display:none">
+    <span id="bridgeBadge" class="bridge-badge">Web-only</span>
+    <span id="bridgeNotice" class="bridge-notice" style="display:none">Popups require daemon (port 9222)</span>
   </div>
 
   <button id="recordBtn" class="btn btn-record">

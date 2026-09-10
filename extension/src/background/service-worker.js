@@ -2,14 +2,14 @@
  * Wally Extension — Service Worker (background)
  *
  * Session lifecycle state machine: idle → recording → bundling → idle.
- * Detects extension popups via tabs.query + tabs.onCreated, attaches
- * chrome.debugger for recording, buffers actions to storage.local
+ * Tracks all tabs via trackedTabs Map (per-tab URL/page capture),
+ * polls ALL tracked tabs for actions via chrome.scripting (MAIN world),
+ * relays content-script CustomEvent actions, buffers to storage.local
  * with debounced flush, keeps SW alive via chrome.alarms, and
  * recovers state on SW restart.
  */
 
 import { MSG_CS_RECORDING_START, MSG_CS_RECORDING_STOP, MSG_CS_READ_ACTIONS, MSG_CS_PING } from '../common/constants.js';
-import { attachPopup, injectRecording, pollPopup, detachPopup, detachAllPopup } from './cdp.js';
 
 // ═══════════════════════════════════════════════════════════════
 // STATE
@@ -17,8 +17,14 @@ import { attachPopup, injectRecording, pollPopup, detachPopup, detachAllPopup } 
 
 let session = null;
 let pollTimer = null;
-let popupPollTimer = null;
 let replayState = null;
+
+/**
+ * trackedTabs: Map<tabId, {url, page}>
+ * Per-tab URL/page stamped at injection/navigation time.
+ * Used by pollAllTargets to stamp actions with correct tab context.
+ */
+const trackedTabs = new Map();
 
 // ═══════════════════════════════════════════════════════════════
 // ACTION ICON — open side panel
@@ -66,10 +72,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ replaying: !!replayState, sessionId: replayState?.sessionId || null });
       return false;
 
-    // Content script relay: actions from normal pages
+    // Content script relay: actions from normal pages via CustomEvent bridge
     case 'cs_step':
       if (session && session.state === 'recording') {
-        session.actions.push(message);
+        const tabId = sender.tab?.id;
+        const meta = tabId ? trackedTabs.get(tabId) : null;
+        const action = {
+          ts: new Date().toISOString(),
+          ...message,
+          url: message.url || meta?.url || '',
+          page: message.page || meta?.page || '',
+        };
+        session.actions.push(action);
+        // Forward to bridge live channel (best-effort, fire-and-forget)
+        postActionToBridge(session.id, action);
         debouncedFlush();
       }
       return false;
@@ -114,22 +130,28 @@ async function startRecording(url) {
   }
   if (!tab) return false;
 
+  // Stamp url/page at capture time per tab
+  const tabUrl = url || tab.url || '';
+  const tabPage = (() => { try { return new URL(tabUrl).hostname || ''; } catch { return ''; } })();
+
   session = {
     id: 'ext-' + Date.now(),
     state: 'recording',
-    startUrl: url || tab.url || '',
+    startUrl: tabUrl,
     startTabId: tab.id,
     startTime: Date.now(),
     actions: [{
       ts: new Date().toISOString(),
       type: 'navigate',
-      url: url || tab.url || '',
-      page: new URL(url || tab.url || '').hostname || '',
+      url: tabUrl,
+      page: tabPage,
     }],
     network: [],
-    popupTabIds: [],
     keepAliveTimer: null,
   };
+
+  // Track the start tab with per-tab url/page
+  trackedTabs.set(tab.id, { url: tabUrl, page: tabPage });
 
   // Mark active session in storage
   await chrome.storage.local.set({ 'wally-active-session': session.id });
@@ -137,18 +159,14 @@ async function startRecording(url) {
   // Start keep-alive
   startKeepAlive();
 
-  // Start popup polling
-  startPopupPoll();
-
   // Start action polling
   startPolling();
 
-  // Send recording start to content script on active tab
-  try {
-    await chrome.tabs.sendMessage(tab.id, { type: MSG_CS_RECORDING_START });
-  } catch {
-    // CS may not be loaded — not fatal, will attach on next nav
-  }
+  // Inject recording script into start tab
+  await injectIntoTab(tab.id, tabUrl);
+
+  // Sweep all open tabs and inject into any that need it
+  await sweepAndInjectAllTabs();
 
   console.log(`[Wally] Recording started: ${session.id}`);
   return true;
@@ -164,19 +182,21 @@ async function stopRecording() {
   // Stop keep-alive
   stopKeepAlive();
 
-  // Stop popup polling
-  stopPopupPoll();
-
   // Stop action polling
   stopPolling();
 
-  // Send recording stop to content script
+  // Merge bridge-captured actions (popup recordings via daemon ext-aux)
   try {
-    await chrome.tabs.sendMessage(session.startTabId, { type: MSG_CS_RECORDING_STOP });
-  } catch { /* tab may be closed */ }
-
-  // Detach all popup debuggers
-  await detachAllPopup(session.popupTabIds);
+    const bridgeActions = await fetchBridgeActions(session.id);
+    if (bridgeActions.length > 0) {
+      console.log(`[Wally] Merging ${bridgeActions.length} bridge actions`);
+      session.actions = session.actions.concat(bridgeActions);
+      // Sort by timestamp for correct ordering
+      session.actions.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    }
+  } catch (e) {
+    console.warn('[Wally] Bridge merge failed:', e.message);
+  }
 
   // Final buffer flush
   await flushBuffer();
@@ -187,87 +207,105 @@ async function stopRecording() {
   const count = session.actions.length;
   const id = session.id;
   session = null;
+  trackedTabs.clear();
 
   console.log(`[Wally] Recording stopped: ${id} (${count} actions)`);
   return { ok: true, sessionId: id, actionCount: count };
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TAB DETECTION — find extension popups
+// TAB TRACKING — inject into all tabs, track per-tab metadata
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Inject the recording script into a tab via chrome.scripting (MAIN world).
+ * Records per-tab url/page at injection time.
+ *
+ * @param {number} tabId
+ * @param {string} [tabUrl] - URL to stamp; if omitted, reads from chrome.tabs.get
+ */
+async function injectIntoTab(tabId, tabUrl) {
+  if (!session || session.state !== 'recording') return;
+
+  // Resolve URL if not provided
+  if (!tabUrl) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      tabUrl = tab.url || '';
+    } catch {
+      return; // tab closed
+    }
+  }
+
+  // Skip restricted URLs (chrome://, chrome-extension://, etc.)
+  if (!tabUrl || tabUrl.startsWith('chrome://') || tabUrl.startsWith('chrome-extension://')) {
+    return;
+  }
+
+  const tabPage = (() => { try { return new URL(tabUrl).hostname || ''; } catch { return ''; } })();
+
+  // Record per-tab metadata
+  trackedTabs.set(tabId, { url: tabUrl, page: tabPage });
+
+  // Inject recording-inject.js via chrome.scripting (MAIN world)
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      world: 'MAIN',
+      files: ['src/content/recording-inject.js'],
+    });
+  } catch (e) {
+    console.warn(`[Wally] Inject failed tab ${tabId}:`, e.message);
+  }
+}
+
+/**
+ * Sweep all open tabs and inject recording script into each.
+ * Used at recording start to cover pre-existing tabs.
+ */
+async function sweepAndInjectAllTabs() {
+  if (!session || session.state !== 'recording') return;
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+      await injectIntoTab(tab.id, tab.url);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TAB NAVIGATION — re-inject on navigation, track new tabs
 // ═══════════════════════════════════════════════════════════════
 
 chrome.tabs.onCreated.addListener(async (tab) => {
   if (!session || session.state !== 'recording') return;
-  if (tab.url && tab.url.startsWith('chrome-extension://')) {
-    await attachPopupTab(tab.id);
-  }
+  // New tab created — will track on first navigation (onCommitted/onUpdated)
 });
 
 chrome.webNavigation.onCommitted.addListener(async (details) => {
   if (!session || session.state !== 'recording') return;
-  if (details.tabId === session.startTabId && details.frameId === 0) {
-    // Re-arm content script on navigation
-    try {
-      await chrome.tabs.sendMessage(details.tabId, { type: MSG_CS_RECORDING_START });
-    } catch { /* CS not ready yet, will be re-armed on load complete */ }
-  }
+  if (details.frameId !== 0) return; // only top-level navigations
+
+  // Stamp url/page at navigation time
+  const tabPage = (() => { try { return new URL(details.url).hostname || ''; } catch { return ''; } })();
+  trackedTabs.set(details.tabId, { url: details.url, page: tabPage });
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (!session || session.state !== 'recording') return;
   if (changeInfo.status === 'complete') {
-    if (tabId === session.startTabId) {
-      // Page loaded — re-arm content script
-      try {
-        await chrome.tabs.sendMessage(tabId, { type: MSG_CS_RECORDING_START });
-      } catch { /* CS not ready */ }
-    } else {
-      // Check if it's a new extension popup
-      try {
-        const tab = await chrome.tabs.get(tabId);
-        if (tab.url && tab.url.startsWith('chrome-extension://') && !session.popupTabIds.includes(tabId)) {
-          await attachPopupTab(tabId);
-        }
-      } catch { /* tab may have closed */ }
-    }
+    // Page loaded — inject recording script and update tracked metadata
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+        await injectIntoTab(tabId, tab.url);
+      }
+    } catch { /* tab may have closed */ }
   }
 });
 
-async function startPopupPoll() {
-  // Immediate scan for existing extension popups
-  await sweepExtensionPopups();
-  // Periodic sweep every 2s
-  popupPollTimer = setInterval(sweepExtensionPopups, 2000);
-}
-
-function stopPopupPoll() {
-  if (popupPollTimer) {
-    clearInterval(popupPollTimer);
-    popupPollTimer = null;
-  }
-}
-
-async function sweepExtensionPopups() {
-  if (!session || session.state !== 'recording') return;
-  const tabs = await chrome.tabs.query({ url: 'chrome-extension://*/*' });
-  for (const tab of tabs) {
-    if (!session.popupTabIds.includes(tab.id)) {
-      await attachPopupTab(tab.id);
-    }
-  }
-}
-
-async function attachPopupTab(tabId) {
-  if (!session) return;
-  session.popupTabIds.push(tabId);
-  const ok = await attachPopup(tabId);
-  if (ok) {
-    await injectRecording(tabId);
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════
-// POLLING — read actions via chrome.scripting (MAIN world)
+// POLLING — read actions from ALL tracked tabs via MAIN world
 // ═══════════════════════════════════════════════════════════════
 
 function startPolling() {
@@ -284,12 +322,13 @@ function stopPolling() {
 async function pollAllTargets() {
   if (!session || session.state !== 'recording') return;
 
-  // Poll the active tab for actions via MAIN world
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.url && !tab.url.startsWith('chrome-extension://')) {
+  const closedTabs = [];
+
+  // Poll ALL tracked tabs (not just the active tab)
+  for (const [tabId, meta] of trackedTabs) {
+    try {
       const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: false },
+        target: { tabId, allFrames: false },
         world: 'MAIN',
         func: () => {
           const actions = window.__wally_actions || [];
@@ -299,35 +338,26 @@ async function pollAllTargets() {
       });
       if (results && results[0] && results[0].result) {
         for (const action of results[0].result) {
-          session.actions.push({
+          const stamped = {
             ts: new Date().toISOString(),
             ...action,
-            url: action.url || tab.url || '',
-            page: new URL(tab.url).hostname || tab.url,
-          });
+            url: action.url || meta.url || '',
+            page: action.page || meta.page || '',
+          };
+          session.actions.push(stamped);
+          // Forward to bridge live channel (best-effort, fire-and-forget)
+          postActionToBridge(session.id, stamped);
         }
       }
+    } catch {
+      // Tab may have navigated away or been closed
+      closedTabs.push(tabId);
     }
-  } catch {
-    // Tab may have navigated away or been closed
   }
 
-  // Poll popup tabs via CDP
-  for (const tabId of [...session.popupTabIds]) {
-    try {
-      const actions = await pollPopup(tabId);
-      for (const action of actions) {
-        session.actions.push({
-          ts: new Date().toISOString(),
-          ...action,
-          url: action.url || '',
-          page: 'ext-' + tabId,
-        });
-      }
-    } catch {
-      // Tab may have closed — remove from tracking
-      session.popupTabIds = session.popupTabIds.filter(id => id !== tabId);
-    }
+  // Clean up closed tabs
+  for (const tabId of closedTabs) {
+    trackedTabs.delete(tabId);
   }
 }
 
@@ -442,6 +472,237 @@ async function deleteSession(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// SELECTOR GRAMMAR — resolve Wally-format selectors in page context
+//
+// Port of __wally_resolveSelector grammar from recording-inject.js.
+// CSS-first chain with XPath/text fallback. Never throws — returns
+// null for unparseable or unmatched selectors.
+//
+// NOTE: resolveSelectorGrammar runs in PAGE context (MAIN world),
+// not in the service worker. It is embedded as a string in
+// executeScript calls. The standalone module (selector-grammar.js)
+// contains the same logic for unit testing.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Source code for resolveSelectorGrammar — injected into page context.
+ * This string is passed to chrome.scripting.executeScript as an inline func.
+ */
+const RESOLVER_SOURCE = `function resolveSelectorGrammar(sel) {
+  if (!sel || typeof sel !== 'string') return null;
+
+  // 1. Role + text: button "Text" | link "Text" | [role] "Text"
+  var spaceIdx = sel.indexOf(' ');
+  if (spaceIdx > 0) {
+    var role = sel.substring(0, spaceIdx);
+    var rest = sel.substring(spaceIdx + 1).trim();
+    if (rest.charAt(0) === '"' && rest.charAt(rest.length - 1) === '"' && rest.length >= 2) {
+      var text = rest.slice(1, -1);
+      if (text.length > 0) {
+        var tagMap = { link: 'a' };
+        var tagName = tagMap[role] || role;
+        var roleEls = document.querySelectorAll('[role="' + role + '"]');
+        for (var i = 0; i < roleEls.length; i++) {
+          if ((roleEls[i].textContent || '').trim().indexOf(text) !== -1) return roleEls[i];
+        }
+        try {
+          var tagEls = document.querySelectorAll(tagName);
+          for (var j = 0; j < tagEls.length; j++) {
+            if ((tagEls[j].textContent || '').trim().indexOf(text) !== -1) return tagEls[j];
+          }
+        } catch(e) {}
+        return null;
+      }
+    }
+  }
+
+  // 2-6. CSS-parseable selectors
+  try {
+    var testIdMatch = sel.match(/^\\[data-testid="([^"]+)"\\]$/);
+    if (testIdMatch) {
+      var el = document.querySelector('[data-testid="' + testIdMatch[1] + '"]');
+      if (el) return el;
+    }
+    if (/^#[\\w-]+$/.test(sel)) {
+      var el2 = document.querySelector(sel);
+      if (el2) return el2;
+    }
+    var ariaMatch = sel.match(/^\\[aria-label="([^"]+)"\\]$/);
+    if (ariaMatch) {
+      var el3 = document.querySelector('[aria-label="' + ariaMatch[1] + '"]');
+      if (el3) return el3;
+    }
+    var nameMatch = sel.match(/^(input|textarea|select)(?:\\[type="(\\w+)"\\])?\\[name="([^"]+)"\\]$/);
+    if (nameMatch) {
+      var tag = nameMatch[1], type = nameMatch[2], name = nameMatch[3];
+      var css = tag + '[name="' + name + '"]';
+      if (type) css += '[type="' + type + '"]';
+      var el4 = document.querySelector(css);
+      if (el4) return el4;
+    }
+    var el5 = document.querySelector(sel);
+    if (el5) return el5;
+  } catch(e) {}
+
+  // 7. Nth-child path fallback
+  var parts = sel.split(/\\s*>\\s*/);
+  if (parts.length > 0) {
+    var current = null;
+    for (var pi = 0; pi < parts.length; pi++) {
+      var part = parts[pi].trim();
+      var nthMatch = part.match(/^(\\w+)(?:[=:](\\w+))?:(?:nth-child|nth-of-type)\\((\\d+)\\)$/);
+      if (nthMatch) {
+        var tagName = nthMatch[1], idx = parseInt(nthMatch[3], 10);
+        if (pi === 0) {
+          var candidates = document.querySelectorAll(tagName);
+          current = candidates[idx - 1] || null;
+        } else if (current) {
+          var children = Array.from(current.children).filter(function(c) {
+            return c.tagName && c.tagName.toLowerCase() === tagName;
+          });
+          current = children[idx - 1] || null;
+        }
+        if (!current) return null;
+      } else {
+        if (pi === 0) { current = document.querySelector(part); }
+        else if (current) { current = current.querySelector(part); }
+        if (!current) return null;
+      }
+    }
+    return current;
+  }
+  return null;
+}`;
+
+/**
+ * Resolve a selector by running resolveSelectorGrammar in page context.
+ * @param {number} tabId
+ * @param {string} selector
+ * @returns {Promise<Element|null>}
+ */
+async function resolveInPage(tabId, selector) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: false },
+    world: 'MAIN',
+    func: (sel) => {
+      // Inline the resolver — same logic as RESOLVER_SOURCE and selector-grammar.js
+      function resolveSelectorGrammar(s) {
+        if (!s || typeof s !== 'string') return null;
+        // Role + text: split on first space
+        var spaceIdx = s.indexOf(' ');
+        if (spaceIdx > 0) {
+          var role = s.substring(0, spaceIdx);
+          var rest = s.substring(spaceIdx + 1).trim();
+          if (rest.charAt(0) === '"' && rest.charAt(rest.length - 1) === '"' && rest.length >= 2) {
+            var text = rest.slice(1, -1);
+            if (text.length > 0) {
+              var tagMap = { link: 'a' };
+              var tagName = tagMap[role] || role;
+              var roleEls = document.querySelectorAll('[role="' + role + '"]');
+              for (var i = 0; i < roleEls.length; i++) {
+                if ((roleEls[i].textContent || '').trim().indexOf(text) !== -1) return roleEls[i];
+              }
+              try {
+                var tagEls = document.querySelectorAll(tagName);
+                for (var j = 0; j < tagEls.length; j++) {
+                  if ((tagEls[j].textContent || '').trim().indexOf(text) !== -1) return tagEls[j];
+                }
+              } catch(e) {}
+              return null;
+            }
+          }
+        }
+        // CSS-parseable selectors
+        try {
+          var testIdMatch = s.match(/^\[data-testid="([^"]+)"\]$/);
+          if (testIdMatch) {
+            var el = document.querySelector('[data-testid="' + testIdMatch[1] + '"]');
+            if (el) return el;
+          }
+          if (/^#[\w-]+$/.test(s)) {
+            var el2 = document.querySelector(s);
+            if (el2) return el2;
+          }
+          var ariaMatch = s.match(/^\[aria-label="([^"]+)"\]$/);
+          if (ariaMatch) {
+            var el3 = document.querySelector('[aria-label="' + ariaMatch[1] + '"]');
+            if (el3) return el3;
+          }
+          var nameMatch = s.match(/^(input|textarea|select)(?:\[type="(\w+)"\])?\[name="([^"]+)"\]$/);
+          if (nameMatch) {
+            var tag = nameMatch[1], type = nameMatch[2], name = nameMatch[3];
+            var css = tag + '[name="' + name + '"]';
+            if (type) css += '[type="' + type + '"]';
+            var el4 = document.querySelector(css);
+            if (el4) return el4;
+          }
+          var el5 = document.querySelector(s);
+          if (el5) return el5;
+        } catch(e) {}
+        // Nth-child path fallback
+        var parts = s.split(/\s*>\s*/);
+        if (parts.length > 0) {
+          var current = null;
+          for (var pi = 0; pi < parts.length; pi++) {
+            var part = parts[pi].trim();
+            var nthMatch = part.match(/^(\w+)(?:[=:](\w+))?:(?:nth-child|nth-of-type)\((\d+)\)$/);
+            if (nthMatch) {
+              var tagName2 = nthMatch[1], idx = parseInt(nthMatch[3], 10);
+              if (pi === 0) {
+                var candidates = document.querySelectorAll(tagName2);
+                current = candidates[idx - 1] || null;
+              } else if (current) {
+                var children = Array.from(current.children).filter(function(c) {
+                  return c.tagName && c.tagName.toLowerCase() === tagName2;
+                });
+                current = children[idx - 1] || null;
+              }
+              if (!current) return null;
+            } else {
+              try {
+                if (pi === 0) { current = document.querySelector(part); }
+                else if (current) { current = current.querySelector(part); }
+              } catch(e) { return null; }
+              if (!current) return null;
+            }
+          }
+          return current;
+        }
+        return null;
+      }
+      return resolveSelectorGrammar(sel);
+    },
+    args: [selector],
+  });
+  return results?.[0]?.result || null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REPLAY RETRY — wait and retry for late-loading SPA elements
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Retry resolving a selector in page context until found or timeout.
+ * Polls every 200ms for up to timeoutMs (default 5s).
+ *
+ * @param {number} tabId
+ * @param {string} selector
+ * @param {number} [timeoutMs=5000]
+ * @returns {Promise<{found: boolean, attempts: number}>}
+ */
+async function resolveWithRetry(tabId, selector, timeoutMs = 5000) {
+  const start = Date.now();
+  let attempts = 0;
+  while (Date.now() - start < timeoutMs) {
+    attempts++;
+    const el = await resolveInPage(tabId, selector);
+    if (el) return { found: true, attempts };
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return { found: false, attempts };
+}
+
+// ═══════════════════════════════════════════════════════════════
 // REPLAY — replay a recorded session (like CLI: wally play)
 // ═══════════════════════════════════════════════════════════════
 
@@ -515,26 +776,31 @@ function getActionDelay(action) {
 async function replayAction(action) {
   // Get the active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return;
+  if (!tab) {
+    surfaceReplayError(action, 'No active tab available');
+    return;
+  }
 
+  // Resolve selector with retry in page context (up to ~5s for late SPA elements)
+  let resolved = null;
   try {
-    await chrome.scripting.executeScript({
+    resolved = await resolveWithRetry(tab.id, action.selector, 5000);
+  } catch (e) {
+    surfaceReplayError(action, 'Selector resolution error: ' + (e.message || e));
+    return;
+  }
+
+  if (!resolved.found) {
+    surfaceReplayError(action, `Element not found after ${resolved.attempts} attempts: ${action.selector}`);
+    return;
+  }
+
+  // Execute action in page context
+  try {
+    const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
       world: 'MAIN',
       func: (act) => {
-        function resolveSelector(sel) {
-          if (!sel) return null;
-          // Try as CSS selector
-          try { return document.querySelector(sel); } catch {}
-          // Try text match
-          const byText = document.evaluate(
-            `//button[contains(text(),"${sel}")] | //a[contains(text(),"${sel}")]`,
-            document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
-          ).singleNodeValue;
-          if (byText) return byText;
-          return null;
-        }
-
         function getOffset(el) {
           const rect = el.getBoundingClientRect();
           return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -551,8 +817,71 @@ async function replayAction(action) {
           el.dispatchEvent(new MouseEvent('click', eventOpts));
         }
 
-        const el = resolveSelector(act.selector);
-        if (!el) return { ok: false, error: 'Element not found: ' + act.selector };
+        // Re-resolve in page context for the actual action execution
+        // (element was verified by SW, but we need the live reference)
+        function resolveInPage(sel) {
+          if (!sel || typeof sel !== 'string') return null;
+          // Role + text: split on first space
+          var spaceIdx = sel.indexOf(' ');
+          if (spaceIdx > 0) {
+            var role = sel.substring(0, spaceIdx);
+            var rest = sel.substring(spaceIdx + 1).trim();
+            if (rest.charAt(0) === '"' && rest.charAt(rest.length - 1) === '"' && rest.length >= 2) {
+              var text = rest.slice(1, -1);
+              if (text.length > 0) {
+                var tagMap = { link: 'a' };
+                var tagName = tagMap[role] || role;
+                var roleEls = document.querySelectorAll('[role="' + role + '"]');
+                for (var ri = 0; ri < roleEls.length; ri++) {
+                  if ((roleEls[ri].textContent || '').trim().indexOf(text) !== -1) return roleEls[ri];
+                }
+                try {
+                  var tagEls = document.querySelectorAll(tagName);
+                  for (var ti = 0; ti < tagEls.length; ti++) {
+                    if ((tagEls[ti].textContent || '').trim().indexOf(text) !== -1) return tagEls[ti];
+                  }
+                } catch(e) {}
+                return null;
+              }
+            }
+          }
+          // CSS selectors
+          try { return document.querySelector(sel); } catch {}
+          // Nth-child path
+          const parts = sel.split(/\s*>\s*/);
+          if (parts.length > 0) {
+            let current = null;
+            for (let i = 0; i < parts.length; i++) {
+              const part = parts[i].trim();
+              const nthMatch = part.match(/^(\w+)(?:[=:](\w+))?:(?:nth-child|nth-of-type)\((\d+)\)$/);
+              if (nthMatch) {
+                const [, tagName, , idx] = nthMatch;
+                const nth = parseInt(idx, 10);
+                if (i === 0) {
+                  const candidates = document.querySelectorAll(tagName);
+                  current = candidates[nth - 1] || null;
+                } else if (current) {
+                  const children = Array.from(current.children).filter(
+                    c => c.tagName && c.tagName.toLowerCase() === tagName
+                  );
+                  current = children[nth - 1] || null;
+                }
+                if (!current) return null;
+              } else {
+                try {
+                  if (i === 0) { current = document.querySelector(part); }
+                  else if (current) { current = current.querySelector(part); }
+                } catch { return null; }
+                if (!current) return null;
+              }
+            }
+            return current;
+          }
+          return null;
+        }
+
+        const el = resolveInPage(act.selector);
+        if (!el) return { ok: false, error: 'Element not found in page: ' + act.selector };
 
         switch (act.type) {
           case 'click':
@@ -620,9 +949,49 @@ async function replayAction(action) {
       },
       args: [action],
     });
+
+    // Read executeScript result — treat {ok:false} as failure
+    const result = results?.[0]?.result;
+    if (!result || result.ok === false) {
+      surfaceReplayError(action, result?.error || 'Action execution failed');
+    }
   } catch (e) {
-    console.warn('[Wally] Replay action failed:', e.message);
+    surfaceReplayError(action, 'Script execution error: ' + (e.message || e));
   }
+}
+
+/**
+ * Surface a replay error to the sidepanel via storage.local.
+ * The sidepanel listens for storage changes and displays errors in the log.
+ *
+ * @param {Object} action - The action that failed
+ * @param {string} error - Error description
+ */
+function surfaceReplayError(action, error) {
+  const errorEntry = {
+    ts: new Date().toISOString(),
+    action: { type: action.type, selector: action.selector, text: action.text },
+    error,
+  };
+
+  console.warn(`[Wally] Replay error: ${action.type} "${action.selector}" — ${error}`);
+
+  // Persist error for sidepanel to pick up
+  chrome.storage.local.get('wally-replay-errors', (data) => {
+    const errors = data['wally-replay-errors'] || [];
+    errors.push(errorEntry);
+    // Keep last 50 errors max
+    if (errors.length > 50) errors.splice(0, errors.length - 50);
+    chrome.storage.local.set({ 'wally-replay-errors': errors });
+  });
+
+  // Also notify sidepanel directly if open
+  chrome.runtime.sendMessage({
+    type: 'replay_error',
+    action: errorEntry.action,
+    error: errorEntry.error,
+    ts: errorEntry.ts,
+  }).catch(() => { /* sidepanel may not be open */ });
 }
 
 function waitForTabLoad(tabId, timeoutMs = 10000) {
@@ -664,23 +1033,15 @@ async function recoverSession() {
   session = {
     ...saved,
     state: 'recording',
-    popupTabIds: [],
     keepAliveTimer: null,
   };
 
   // Re-arm recording infrastructure
   startKeepAlive();
-  startPopupPoll();
+  startPolling();
 
-  // Re-arm content scripts on open tabs
-  const tabs = await chrome.tabs.query({});
-  for (const tab of tabs) {
-    if (tab.url && !tab.url.startsWith('chrome-extension://')) {
-      try {
-        await chrome.tabs.sendMessage(tab.id, { type: MSG_CS_RECORDING_START });
-      } catch { /* CS not loaded */ }
-    }
-  }
+  // Sweep all open tabs and inject recording script
+  await sweepAndInjectAllTabs();
 
   console.log(`[Wally] Session recovered: ${activeId}`);
 }
@@ -690,6 +1051,85 @@ async function recoverSession() {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * Get bridge connection info from storage.
+ * @returns {Promise<{port: string|null, token: string|null}>}
+ */
+async function getBridgeConfig() {
+  const data = await chrome.storage.local.get(['wally-bridge-port', 'wally-bridge-token']);
+  return { port: data['wally-bridge-port'] || null, token: data['wally-bridge-token'] || null };
+}
+
+/**
+ * Post a single action to the bridge live channel (fire-and-forget).
+ * Best-effort: if bridge is unavailable, action is lost (page actions still recorded).
+ *
+ * @param {string} sessionId - Recording session id
+ * @param {Object} action - Action to forward
+ */
+async function postActionToBridge(sessionId, action) {
+  const { port, token } = await getBridgeConfig();
+  if (!port || !token) return;
+
+  try {
+    await fetch(`http://127.0.0.1:${port}/actions?id=${sessionId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(action),
+    });
+  } catch {
+    // Bridge not running — web-only mode, silently ignore
+  }
+}
+
+/**
+ * Fetch bridge-captured actions for merge at stop.
+ * Returns empty array if bridge is unavailable.
+ *
+ * @param {string} sessionId - Recording session id
+ * @returns {Promise<Array>} Bridge actions (empty if unavailable)
+ */
+async function fetchBridgeActions(sessionId) {
+  const { port, token } = await getBridgeConfig();
+  if (!port || !token) return [];
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/actions?id=${sessionId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.actions || [];
+    }
+  } catch {
+    // Bridge not available
+  }
+  return [];
+}
+
+/**
+ * Check bridge connectivity.
+ * @returns {Promise<boolean>}
+ */
+async function checkBridgeConnected() {
+  const { port, token } = await getBridgeConfig();
+  if (!port || !token) return false;
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(2000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Try to send a session to the local bridge server.
  * Returns the bridge response on success, null if bridge is unavailable.
  *
@@ -697,10 +1137,7 @@ async function recoverSession() {
  * @returns {Promise<Object|null>} Bridge result or null
  */
 async function sendToBridge(session) {
-  const data = await chrome.storage.local.get(['wally-bridge-port', 'wally-bridge-token']);
-  const port = data['wally-bridge-port'];
-  const token = data['wally-bridge-token'];
-
+  const { port, token } = await getBridgeConfig();
   if (!port || !token) return null; // bridge not configured
 
   try {
@@ -736,10 +1173,10 @@ async function sendToBridge(session) {
 async function markSessionExported(sessionId) {
   const key = `wally-session-${sessionId}`;
   const data = await chrome.storage.local.get(key);
-  const session = data[key];
-  if (session) {
-    session.exported = true;
-    await chrome.storage.local.set({ [key]: session });
+  const sess = data[key];
+  if (sess) {
+    sess.exported = true;
+    await chrome.storage.local.set({ [key]: sess });
   }
 }
 
@@ -755,11 +1192,11 @@ async function markSessionExported(sessionId) {
  */
 async function downloadSession(sessionId) {
   const data = await chrome.storage.local.get(`wally-session-${sessionId}`);
-  const session = data[`wally-session-${sessionId}`];
-  if (!session) return;
+  const sess = data[`wally-session-${sessionId}`];
+  if (!sess) return;
 
   // Service workers don't have URL.createObjectURL — use data: URL
-  const json = JSON.stringify(session, null, 2);
+  const json = JSON.stringify(sess, null, 2);
   const dataUrl = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
 
   chrome.downloads.download({

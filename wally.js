@@ -1079,7 +1079,7 @@ async function cmdDaemon(args) {
 Wally Daemon — Background Multi-Page Recorder
 
 Usage:
-  node wally.js daemon start [--url <url>] [--profile <name>] [--har] [--har-output <path>]   Start recording
+  node wally.js daemon start [--url <url>] [--profile <name>] [--har] [--har-output <path>] [--ext-aux]   Start recording
   node wally.js daemon stop                                      Stop daemon
   node wally.js daemon status                                    Show pages + actions
 
@@ -1088,6 +1088,11 @@ Options:
   --profile <name>     Chrome profile to use (default: "Profile 9")
   --har                Enable network capture (Network.enable via CDP)
   --har-output <path>  HAR output path (default: <sessionDir>/network.har)
+  --ext-aux            Extension auxiliary mode: capture OTHER extensions' popups only,
+                       forward to bridge for merge with extension recording.
+                       Requires --bridge-port and --bridge-token.
+  --bridge-port <port> Bridge server port (for --ext-aux mode)
+  --bridge-token <tok> Bridge auth token (for --ext-aux mode)
 
 If Chrome CDP is not running, Wally will ask to launch it automatically.
 
@@ -1097,6 +1102,7 @@ Examples:
   node wally.js daemon start --profile "Profile 1"   Use different profile
   node wally.js daemon start --har                    Record with network capture
   node wally.js daemon start --har --har-output /tmp/out.har  Custom HAR path
+  node wally.js daemon start --ext-aux --bridge-port 9229 --bridge-token abc123  Ext-aux mode
 `);
       return;
     }
@@ -1104,13 +1110,21 @@ Examples:
     const profile = getArg(args, '--profile') || CHROME_DEFAULT_PROFILE;
     const har = args.includes('--har');
     const harOutput = getArg(args, '--har-output') || getArg(args, '--harOutput');
+    const extAux = args.includes('--ext-aux');
+    const bridgePort = extAux ? parseInt(getArg(args, '--bridge-port'), 10) : null;
+    const bridgeToken = extAux ? getArg(args, '--bridge-token') : null;
+
+    if (extAux && (!bridgePort || !bridgeToken)) {
+      console.error('[Wally] --ext-aux requires --bridge-port and --bridge-token');
+      process.exit(1);
+    }
 
     // Ensure Chrome CDP is available
     const ok = await ensureCDP(profile, url);
     if (!ok) return;
 
     const daemon = new WallyDaemon();
-    await daemon.start({ url, har, harOutput });
+    await daemon.start({ url, har, harOutput, extAux, bridgePort, bridgeToken });
   } else if (sub === 'stop') {
     // Send SIGINT to running daemon
     const pidFile = path.join(WALLY_DIR, 'daemon.pid');
@@ -1134,7 +1148,7 @@ Examples:
 Wally Daemon — Background Multi-Page Recorder
 
 Usage:
-  node wally.js daemon start [--url <url>] [--profile <name>] [--har] [--har-output <path>]   Start recording
+  node wally.js daemon start [--url <url>] [--profile <name>] [--har] [--har-output <path>] [--ext-aux]   Start recording
   node wally.js daemon stop                                      Stop daemon
   node wally.js daemon status                                    Show pages + actions
 
@@ -1143,6 +1157,11 @@ Options:
   --profile <name>     Chrome profile to use (default: "Profile 9")
   --har                Enable network capture (Network.enable via CDP)
   --har-output <path>  HAR output path (default: <sessionDir>/network.har)
+  --ext-aux            Extension auxiliary mode: capture OTHER extensions' popups only,
+                       forward to bridge for merge with extension recording.
+                       Requires --bridge-port and --bridge-token.
+  --bridge-port <port> Bridge server port (for --ext-aux mode)
+  --bridge-token <tok> Bridge auth token (for --ext-aux mode)
 
 If Chrome CDP is not running, Wally will ask to launch it automatically.
 
@@ -1151,6 +1170,8 @@ Examples:
   node wally.js daemon start --url https://avnu.fi   Navigate + record
   node wally.js daemon start --profile "Profile 1"   Use different profile
   node wally.js daemon start --har                    Record with network capture
+  node wally.js daemon start --har --har-output /tmp/out.har  Custom HAR path
+  node wally.js daemon start --ext-aux --bridge-port 9229 --bridge-token abc123  Ext-aux mode
 `);
   }
 }

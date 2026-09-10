@@ -11,7 +11,6 @@
     "scripting",
     "tabs",
     "activeTab",
-    "debugger",
     "webNavigation",
     "downloads",
     "alarms"
@@ -49,12 +48,7 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "web_accessible_resources": [
-    {
-      "resources": ["src/content/recording-inject.js"],
-      "matches": ["<all_urls>"]
-    }
-  ],
+  "web_accessible_resources": [],
   "commands": {
     "_execute_action": {
       "suggested_key": {
