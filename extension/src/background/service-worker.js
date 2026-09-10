@@ -939,6 +939,11 @@ async function replaySession(sessionId, signal) {
     const firstTabId = sess.actions.find(a => a.tabId)?.tabId;
     if (firstTabId && currentReplayTabId) tabMap.set(firstTabId, currentReplayTabId);
 
+    // Only tabs with at least one real action (not just navigate) should be recreated
+    const relevantTabIds = new Set(
+      sess.actions.filter(a => a.tabId && a.type !== 'navigate' && a.type !== 'click_detected' && a.type !== 'page_change').map(a => a.tabId)
+    );
+
     // Replay each action with delay
     for (let i = 0; i < sess.actions.length; i++) {
       if (!replayState) break; // replay cancelled
@@ -962,6 +967,8 @@ async function replaySession(sessionId, signal) {
       if (action.type === 'click_detected' || action.type === 'page_change') continue;
 
       // Per-tab routing: ensure action runs in its original tab
+      // Skip tabs that never had a real action (idle tabs open before recording)
+      if (action.tabId && !relevantTabIds.has(action.tabId)) continue;
       let targetTabId = currentReplayTabId;
       if (action.tabId) {
         if (!tabMap.has(action.tabId)) {
