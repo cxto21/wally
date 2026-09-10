@@ -96,3 +96,16 @@ wally create-skill    # Generate skill from recorded session
 - Cannot record `chrome://`, Chrome Web Store, or PDF pages
 - Extension popups require debugger permission (shows Chrome banner)
 - Shadow DOM elements may not be captured
+
+## Roadmap
+
+**Core — faithful engine (stable):**
+- Multi-tab recording with per-tab `tabId`/`tabUrl` and `trackedTabs` polling — replays in correct tabs in order
+- Extension popup recording via `lib/daemon.js` `Target` discovery + `bridge` (`--ext-aux`) — pure extension cannot attach to `chrome-extension://` of another extension (`IsRestrictedUrl`, needs `--remote-debugging-port` or `--silent-debugger-extension-api`)
+- Replay hierarchy `bestSemanticSelector → targetSelector → ancestorSelectors → text fallback` with retry, per-tab routing and Stop button
+- Export `actions.jsonl` + `playwright.spec.js` + HAR, `wally create-skill`
+
+**Next — fallback & adaptive (vision, not inflated):**
+- Vision/OCR fallback when `resolveWithHierarchy` fails → interpret, repair selector live, then save minimal path for that adversity (token optimizer)
+- Adaptive router: conditional branches per step (e.g. `cookies banner present/absent`, `hard refresh → accept cookies` vs skip) — records alternative paths, learns
+- Comments during recording for skill post-processing: natural-language notes + attachments → parameterized skills (variables, loops over `N` users, price filters, `mail@example.com` + Composio/Nango integrations) — motor fiel now, magia after
