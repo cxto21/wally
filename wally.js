@@ -1429,7 +1429,7 @@ function importFile(filePath) {
 async function cmdPlay(args) {
   const allRecords = fs.existsSync(RECORDS_DIR) ? fs.readdirSync(RECORDS_DIR).filter(d => {
     const full = path.join(RECORDS_DIR, d);
-    return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'playwright.spec.js'));
+    return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'actions.jsonl'));
   }) : [];
   // Show all, most recent first (reliable, no filtering)
   const records = allRecords.sort().reverse();
