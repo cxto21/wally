@@ -85,6 +85,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const action = {
           ts: new Date().toISOString(),
           ...message,
+          tabId,
+          tabUrl: meta?.url || '',
           url: message.url || meta?.url || '',
           page: message.page || meta?.page || '',
         };
@@ -148,6 +150,8 @@ async function startRecording(url) {
     actions: [{
       ts: new Date().toISOString(),
       type: 'navigate',
+      tabId: tab.id,
+      tabUrl,
       url: tabUrl,
       page: tabPage,
     }],
@@ -350,6 +354,8 @@ async function pollAllTargets() {
           const stamped = {
             ts: new Date().toISOString(),
             ...action,
+            tabId,
+            tabUrl: meta.url || '',
             url: action.url || meta.url || '',
             page: action.page || meta.page || '',
           };
@@ -799,14 +805,23 @@ async function replaySession(sessionId, signal) {
   console.log(`[Wally] Replaying session ${sessionId} (${sess.actions.length} actions)`);
 
   try {
-    // Navigate to start URL if available
+    // Navigate to start URL on active tab and map original tabIds → replay tabIds
+    let currentReplayTabId = null;
     if (sess.startUrl) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab) {
         await chrome.tabs.update(tab.id, { url: sess.startUrl });
         await waitForTabLoad(tab.id);
+        currentReplayTabId = tab.id;
       }
+    } else {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) currentReplayTabId = tab.id;
     }
+    // Map original tabId → replay tabId
+    const tabMap = new Map();
+    const firstTabId = sess.actions.find(a => a.tabId)?.tabId;
+    if (firstTabId && currentReplayTabId) tabMap.set(firstTabId, currentReplayTabId);
 
     // Replay each action with delay
     for (let i = 0; i < sess.actions.length; i++) {
@@ -823,17 +838,35 @@ async function replaySession(sessionId, signal) {
 
       // Skip synthetic polling events — not user actions
       if (action.type === 'click_detected' || action.type === 'page_change') continue;
-      // Handle navigation: navigate to the recorded URL
+
+      // Per-tab routing: ensure action runs in its original tab
+      let targetTabId = currentReplayTabId;
+      if (action.tabId) {
+        if (!tabMap.has(action.tabId)) {
+          // New tab appeared during recording → recreate it
+          const newTab = await chrome.tabs.create({ url: action.tabUrl || action.url || 'about:blank', active: false });
+          await waitForTabLoad(newTab.id);
+          tabMap.set(action.tabId, newTab.id);
+          console.log(`[Wally] Replay created tab ${newTab.id} for original ${action.tabId}`);
+        }
+        targetTabId = tabMap.get(action.tabId);
+        if (targetTabId !== currentReplayTabId) {
+          await chrome.tabs.update(targetTabId, { active: true });
+          await waitForTabLoad(targetTabId);
+          currentReplayTabId = targetTabId;
+        }
+      }
+
+      // Handle navigation: navigate the target tab
       if (action.type === 'navigate') {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab && action.url) {
-          await chrome.tabs.update(tab.id, { url: action.url });
-          await waitForTabLoad(tab.id);
+        if (action.url) {
+          await chrome.tabs.update(targetTabId, { url: action.url });
+          await waitForTabLoad(targetTabId);
         }
         continue;
       }
 
-      await replayAction(action);
+      await replayAction(action, targetTabId);
 
       // Delay between actions (like real user behavior)
       const delay = getActionDelay(action);
@@ -866,18 +899,22 @@ function getActionDelay(action) {
   }
 }
 
-async function replayAction(action) {
-  // Get the active tab
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) {
-    surfaceReplayError(action, 'No active tab available');
-    return;
+async function replayAction(action, targetTabId) {
+  // Prefer the per-tab target (multi-tab replay), fallback to active tab
+  let tabId = targetTabId;
+  if (!tabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      surfaceReplayError(action, 'No active tab available');
+      return;
+    }
+    tabId = tab.id;
   }
 
   // Resolve selector with hierarchy-first chain (best→target→ancestor→selector)
   let resolved = null;
   try {
-    resolved = await resolveWithHierarchy(action, tab.id);
+    resolved = await resolveWithHierarchy(action, tabId);
   } catch (e) {
     surfaceReplayError(action, 'Selector resolution error: ' + (e.message || e));
     return;
@@ -891,7 +928,7 @@ async function replayAction(action) {
   // Execute action in page context
   try {
     const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: false },
+      target: { tabId, allFrames: false },
       world: 'MAIN',
       func: (act) => {
         function getOffset(el) {
