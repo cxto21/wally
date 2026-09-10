@@ -40,10 +40,8 @@ const log = createLogger('wally');
 const WALLY_DIR = process.env.WALLY_DIR || '/tmp/opencode/wally';
 const SESSIONS_DIR = path.join(WALLY_DIR, 'sessions');
 const RECORDS_DIR = path.join(__dirname, '.records');
-const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || '';
-if (!QA_READY_PASSWORD) {
-  console.warn('[Wally] QA_READY_PASSWORD not set — extension password prompts will be skipped');
-}
+const QA_READY_PASSWORD = process.env.QA_READY_PASSWORD || process.env.WALLY_EXTENSION_PASSWORD || '';
+// No startup warning — Wally is generic for any extension; password handling is on-demand
 
 // ═══════════════════════════════════════════════════════════════════
 // SNAPSHOT — Accessibility snapshot via CDP
