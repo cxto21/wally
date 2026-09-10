@@ -1472,6 +1472,18 @@ async function cmdPlay(args) {
   const id = records[choice - 1];
   const spec = path.join(RECORDS_DIR, id, 'playwright.spec.js');
   console.log(`\n[Wally] Playing ${id} → ${spec}\n`);
+
+  // Ensure Chrome CDP is up — if not, offer to launch it (like daemon start does)
+  const { checkCDP, ensureCDP } = require('./lib/cdp');
+  const cdpStatus = await checkCDP();
+  if (!cdpStatus.ok) {
+    const ok = await ensureCDP();
+    if (!ok) {
+      console.log('[Wally] Cannot play without Chrome CDP. Run: google-chrome --remote-debugging-port=9222');
+      return;
+    }
+  }
+
   const proc = spawn('node', [spec], { stdio: 'inherit', cwd: path.dirname(spec) });
   await new Promise((res) => proc.on('close', res));
 }
