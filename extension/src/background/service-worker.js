@@ -75,6 +75,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Content script relay: actions from normal pages via CustomEvent bridge
     case 'cs_step':
       if (session && session.state === 'recording') {
+        // Filter synthetic polling events — not replayable, just telemetry
+        if (message.type === 'click_detected' || message.type === 'page_change') return false;
         const tabId = sender.tab?.id;
         const meta = tabId ? trackedTabs.get(tabId) : null;
         const action = {
@@ -338,6 +340,8 @@ async function pollAllTargets() {
       });
       if (results && results[0] && results[0].result) {
         for (const action of results[0].result) {
+          // Filter synthetic polling events
+          if (action.type === 'click_detected' || action.type === 'page_change') continue;
           const stamped = {
             ts: new Date().toISOString(),
             ...action,
@@ -737,8 +741,17 @@ async function replaySession(sessionId) {
       replayState.currentIndex = i;
       const action = sess.actions[i];
 
-      // Skip navigate actions (already handled)
-      if (action.type === 'navigate') continue;
+      // Skip synthetic polling events — not user actions
+      if (action.type === 'click_detected' || action.type === 'page_change') continue;
+      // Handle navigation: navigate to the recorded URL
+      if (action.type === 'navigate') {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && action.url) {
+          await chrome.tabs.update(tab.id, { url: action.url });
+          await waitForTabLoad(tab.id);
+        }
+        continue;
+      }
 
       await replayAction(action);
 
