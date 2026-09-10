@@ -72,6 +72,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ replaying: !!replayState, sessionId: replayState?.sessionId || null });
       return false;
 
+    case 'STOP_REPLAY':
+      handleStopReplay().then(r => sendResponse(r));
+      return true;
+
     // Content script relay: actions from normal pages via CustomEvent bridge
     case 'cs_step':
       if (session && session.state === 'recording') {
@@ -826,6 +830,12 @@ async function replaySession(sessionId, signal) {
     // Replay each action with delay
     for (let i = 0; i < sess.actions.length; i++) {
       if (!replayState) break; // replay cancelled
+      if (replayState.stopped) {
+        const stoppedAt = replayState.currentIndex ?? i;
+        replayState = null;
+        console.log(`[Wally] Replay stopped by user at ${stoppedAt}/${sess.actions.length}`);
+        return { ok: true, replayed: stoppedAt, total: sess.actions.length, stopped: true };
+      }
       // AbortSignal check — stop after current action completes
       if (signal && signal.aborted) {
         replayState = null;
@@ -883,6 +893,14 @@ async function replaySession(sessionId, signal) {
     console.error(`[Wally] Replay failed:`, error);
     return { ok: false, error };
   }
+}
+
+async function handleStopReplay() {
+  if (!replayState) return { ok: false, error: 'Not replaying' };
+  // Flag for replay loop to break gracefully (keeps currentIndex)
+  replayState.stopped = true;
+  console.log('[Wally] Replay stop requested');
+  return { ok: true, stopped: true };
 }
 
 function getActionDelay(action) {

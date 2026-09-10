@@ -17,6 +17,7 @@ const bridgeBadgeEl = document.getElementById('bridgeBadge');
 const bridgeNoticeEl = document.getElementById('bridgeNotice');
 
 let recording = false;
+let replaying = false;
 let lastSessionId = null;
 let pollTimer = null;
 let lastActionCount = 0;
@@ -57,6 +58,22 @@ recordBtn.addEventListener('click', () => {
 });
 
 stopBtn.addEventListener('click', () => {
+  if (replaying) {
+    chrome.runtime.sendMessage({ type: 'STOP_REPLAY' }, (res) => {
+      // Replaying will be interrupted; UI will be restored by response handler
+      replaying = false;
+      stopBtn.style.display = 'none';
+      recordBtn.style.display = 'block';
+      statusEl.className = 'status idle';
+      statusText.textContent = 'Replay stopped';
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span> <span class="type">stop</span> <span class="detail">Replay stopped by user</span>`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    });
+    return;
+  }
   chrome.runtime.sendMessage({ type: 'stop_recording' }, (res) => {
     if (res && res.ok) {
       setRecording(false);
@@ -268,10 +285,12 @@ function renderSessions(sessions) {
 // ═══════════════════════════════════════════════════════════════
 
 function replaySession(sessionId) {
+  replaying = true;
   statusEl.className = 'status recording';
   statusText.textContent = 'Replaying...';
   recordBtn.style.display = 'none';
-  stopBtn.style.display = 'none';
+  stopBtn.textContent = '⏹ Stop Replay';
+  stopBtn.style.display = 'block';
   exportBtn.disabled = true;
   logSection.style.display = 'block';
   logEl.innerHTML = '';
@@ -284,14 +303,19 @@ function replaySession(sessionId) {
   logEl.appendChild(entry);
 
   chrome.runtime.sendMessage({ type: 'replay_session', id: sessionId }, (res) => {
+    replaying = false;
+    stopBtn.textContent = '⏹ Stop Recording';
+    stopBtn.style.display = 'none';
     if (res && res.ok) {
       statusEl.className = 'status idle';
-      statusText.textContent = `Replayed ${res.replayed}/${res.total} actions`;
+      if (res.stopped) statusText.textContent = `Replay stopped (${res.replayed}/${res.total})`;
+      else statusText.textContent = `Replayed ${res.replayed}/${res.total} actions`;
       recordBtn.style.display = 'block';
 
       const doneEntry = document.createElement('div');
       doneEntry.className = 'log-entry';
-      doneEntry.innerHTML = `<span class="time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span> <span class="type">done</span> <span class="detail">Replay finished (${res.replayed} actions)</span>`;
+      const label = res.stopped ? 'stopped' : 'done';
+      doneEntry.innerHTML = `<span class="time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span> <span class="type">${label}</span> <span class="detail">Replay ${res.stopped ? 'stopped' : 'finished'} (${res.replayed} actions)</span>`;
       logEl.appendChild(doneEntry);
       logEl.scrollTop = logEl.scrollHeight;
     } else {
