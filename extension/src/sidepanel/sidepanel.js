@@ -178,7 +178,13 @@ function appendLogEntry(action) {
       detail = action.selector || '';
   }
 
-  entry.innerHTML = `<span class="time">${time}</span> <span class="type">${action.type}</span> <span class="detail">${escapeHtml(detail)}</span>`;
+  // Hierarchy badge — show bestSemanticSelector when available
+  let badge = '';
+  if (action.bestSemanticSelector) {
+    badge = ` <span class="hierarchy-badge">${escapeHtml(action.bestSemanticSelector)}</span>`;
+  }
+
+  entry.innerHTML = `<span class="time">${time}</span> <span class="type">${action.type}</span> <span class="detail">${escapeHtml(detail)}</span>${badge}`;
 
   logEl.appendChild(entry);
   logEl.scrollTop = logEl.scrollHeight;
@@ -313,14 +319,18 @@ function appendReplayError(entry) {
   const time = new Date(entry.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   let detail = '';
+  let badge = '';
   if (entry.action) {
     const label = entry.action.text
       ? `"${entry.action.text.substring(0, 40)}"`
       : entry.action.selector || '';
     detail = `${entry.action.type} ${label}`;
+    if (entry.action.bestSemanticSelector) {
+      badge = ` <span class="hierarchy-badge">${escapeHtml(entry.action.bestSemanticSelector)}</span>`;
+    }
   }
 
-  errorDiv.innerHTML = `<span class="time">${time}</span> <span class="type error">FAIL</span> <span class="detail">${escapeHtml(detail)}</span> <span class="error-msg">${escapeHtml(entry.error)}</span>`;
+  errorDiv.innerHTML = `<span class="time">${time}</span> <span class="type error">FAIL</span> <span class="detail">${escapeHtml(detail)}</span>${badge} <span class="error-msg">${escapeHtml(entry.error)}</span>`;
 
   logEl.appendChild(errorDiv);
   logEl.scrollTop = logEl.scrollHeight;

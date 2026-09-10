@@ -725,10 +725,66 @@ async function resolveWithRetry(tabId, selector, timeoutMs = 5000) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// HIERARCHY-First RESOLUTION — best→target→ancestor→selector
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Build a priority-ordered list of selector strategies from an action's
+ * hierarchy fields. Falls back to legacy selector as last resort.
+ *
+ * @param {Object} action - Recorded action with hierarchy fields
+ * @returns {string[]} Non-empty selector strings in retry order
+ */
+function _buildStrategyChain(action) {
+  const strategies = [];
+  if (action.bestSemanticSelector) strategies.push(action.bestSemanticSelector);
+  if (action.targetSelector) strategies.push(action.targetSelector);
+  if (action.ancestorSelectors && action.ancestorSelectors.length > 0) {
+    for (const anc of action.ancestorSelectors) {
+      if (anc) strategies.push(anc);
+    }
+  }
+  // Legacy selector as final fallback
+  if (action.selector) strategies.push(action.selector);
+  return strategies;
+}
+
+/**
+ * Resolve an element using the hierarchy-first fallback chain.
+ * Tries bestSemanticSelector → targetSelector → ancestorSelectors → selector,
+ * each with retry logic (resolveWithRetry, 2000ms per strategy).
+ *
+ * @param {Object} action - Recorded action with hierarchy fields
+ * @param {number} tabId - Tab to resolve in
+ * @returns {Promise<{found: boolean, strategy: string|null, attempts: number}>}
+ */
+async function resolveWithHierarchy(action, tabId) {
+  const strategies = _buildStrategyChain(action);
+  let totalAttempts = 0;
+
+  for (const strategy of strategies) {
+    const result = await resolveWithRetry(tabId, strategy, 2000);
+    totalAttempts += result.attempts;
+    if (result.found) {
+      return { found: true, strategy, attempts: totalAttempts };
+    }
+  }
+
+  return { found: false, strategy: null, attempts: totalAttempts };
+}
+
+// ═══════════════════════════════════════════════════════════════
 // REPLAY — replay a recorded session (like CLI: wally play)
 // ═══════════════════════════════════════════════════════════════
 
-async function replaySession(sessionId) {
+/**
+ * Replay a recorded session.
+ *
+ * @param {string} sessionId - Session to replay
+ * @param {AbortSignal} [signal] - Optional signal to stop replay mid-sequence
+ * @returns {Promise<{ok: boolean, replayed?: number, total?: number, stopped?: boolean, error?: string}>}
+ */
+async function replaySession(sessionId, signal) {
   if (replayState) return { ok: false, error: 'Already replaying' };
   if (session && session.state === 'recording') return { ok: false, error: 'Cannot replay while recording' };
 
@@ -755,6 +811,12 @@ async function replaySession(sessionId) {
     // Replay each action with delay
     for (let i = 0; i < sess.actions.length; i++) {
       if (!replayState) break; // replay cancelled
+      // AbortSignal check — stop after current action completes
+      if (signal && signal.aborted) {
+        replayState = null;
+        console.log(`[Wally] Replay stopped by signal at action ${i}/${sess.actions.length}`);
+        return { ok: true, replayed: i, total: sess.actions.length, stopped: true };
+      }
 
       replayState.currentIndex = i;
       const action = sess.actions[i];
@@ -812,10 +874,10 @@ async function replayAction(action) {
     return;
   }
 
-  // Resolve selector with retry in page context (up to ~5s for late SPA elements)
+  // Resolve selector with hierarchy-first chain (best→target→ancestor→selector)
   let resolved = null;
   try {
-    resolved = await resolveWithRetry(tab.id, action.selector, 5000);
+    resolved = await resolveWithHierarchy(action, tab.id);
   } catch (e) {
     surfaceReplayError(action, 'Selector resolution error: ' + (e.message || e));
     return;

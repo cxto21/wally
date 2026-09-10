@@ -153,3 +153,35 @@ export async function resolveWithRetry(selector, resolveFn, timeoutMs = 5000) {
   }
   return { found: false, el: null, attempts };
 }
+
+/**
+ * Resolve an element using the hierarchy-first fallback chain.
+ * Tries bestSemanticSelector → targetSelector → ancestorSelectors → selector,
+ * each via resolveWithRetry with 2000ms per strategy.
+ *
+ * @param {Object} action - Recorded action with hierarchy fields
+ * @param {Function} resolveFn - resolveSelectorGrammar function (for testing injection)
+ * @param {number} [strategyTimeoutMs=2000] - Timeout per individual strategy
+ * @returns {Promise<{found: boolean, el: Element|null, strategy: string|null, attempts: number}>}
+ */
+export async function resolveWithSelectorHierarchy(action, resolveFn, strategyTimeoutMs = 2000) {
+  const strategies = [];
+  if (action.bestSemanticSelector) strategies.push(action.bestSemanticSelector);
+  if (action.targetSelector) strategies.push(action.targetSelector);
+  if (action.ancestorSelectors && action.ancestorSelectors.length > 0) {
+    for (const anc of action.ancestorSelectors) {
+      if (anc) strategies.push(anc);
+    }
+  }
+  if (action.selector) strategies.push(action.selector);
+
+  let totalAttempts = 0;
+  for (const strategy of strategies) {
+    const result = await resolveWithRetry(strategy, resolveFn, strategyTimeoutMs);
+    totalAttempts += result.attempts;
+    if (result.found) {
+      return { found: true, el: result.el, strategy, attempts: totalAttempts };
+    }
+  }
+  return { found: false, el: null, strategy: null, attempts: totalAttempts };
+}
