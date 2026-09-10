@@ -428,10 +428,26 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 chrome.webNavigation.onCommitted.addListener(async (details) => {
   if (!session || session.state !== 'recording') return;
   if (details.frameId !== 0) return; // only top-level navigations
+  if (details.url.startsWith('chrome://') || details.url.startsWith('chrome-extension://') || details.url === 'about:blank') return;
 
   // Stamp url/page at navigation time
   const tabPage = (() => { try { return new URL(details.url).hostname || ''; } catch { return ''; } })();
   trackedTabs.set(details.tabId, { url: details.url, page: tabPage });
+
+  // Direct navigate capture (fingerprint poll may miss it if page unloads quickly, e.g. paisanos.com via address bar)
+  const last = session.actions[session.actions.length - 1];
+  if (!last || last.type !== 'navigate' || last.url !== details.url) {
+    session.actions.push({
+      ts: new Date().toISOString(),
+      type: 'navigate',
+      url: details.url,
+      page: tabPage,
+      tabId: details.tabId,
+      tabUrl: details.url,
+    });
+    postActionToBridge(session.id, session.actions[session.actions.length - 1]);
+    debouncedFlush();
+  }
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
