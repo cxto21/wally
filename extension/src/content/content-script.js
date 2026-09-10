@@ -41,6 +41,21 @@
     }
   });
 
+  // Also listen for postMessage (MAIN world → isolated world) — more reliable for clicks that navigate quickly
+  window.addEventListener('message', function(e) {
+    if (e.source !== window) return;
+    if (!e.data || e.data.type !== '__wally_action') return;
+    var detail = e.data.action;
+    if (detail) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'cs_step',
+          ...detail,
+        });
+      } catch (err) {}
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════
   // MESSAGE HANDLER — SW → CS control
   // ═══════════════════════════════════════════════════════════════

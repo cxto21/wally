@@ -257,6 +257,9 @@
     try {
       window.dispatchEvent(new CustomEvent('__wally_action', { detail: action }));
     } catch (e) {}
+    try {
+      window.postMessage({ type: '__wally_action', action }, '*');
+    } catch (e) {}
   }
 
   function commitFill() {

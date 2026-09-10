@@ -103,7 +103,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Filter copy/paste/select-all shortcuts (Ctrl/Cmd + single letter)
         if (message.type === 'press' && message.modifiers && message.modifiers.length > 0
             && message.key && message.key.length === 1 && /[a-z]/i.test(message.key)) return false;
-        // Deduplicate rapid SPA navigates (aistudio pushes hash navigates every 500ms)
+        // Deduplicate vs polling (both deliver same click before navigate) and rapid SPA navigates
+        const _lastCs = session.actions[session.actions.length - 1];
+        if (_lastCs && _lastCs.type === message.type && _lastCs.selector === message.selector && _lastCs.value === message.value && Date.now() - new Date(_lastCs.ts).getTime() < 600) return false;
         if (message.type === 'navigate') {
           const last = session.actions[session.actions.length - 1];
           if (last && last.type === 'navigate' && last.url === message.url) return false;
@@ -501,7 +503,9 @@ async function pollAllTargets() {
           if (action.type === 'click_detected' || action.type === 'page_change') continue;
           if (action.type === 'press' && action.modifiers && action.modifiers.length > 0
               && action.key && action.key.length === 1 && /[a-z]/i.test(action.key)) continue;
-          // Deduplicate SPA hash navigates (aistudio)
+          // Deduplicate vs immediate postMessage relay and rapid SPA navigates
+          const lastPoll = session.actions[session.actions.length - 1];
+          if (lastPoll && lastPoll.type === action.type && lastPoll.selector === action.selector && lastPoll.value === action.value && Date.now() - new Date(lastPoll.ts).getTime() < 600) continue;
           if (action.type === 'navigate') {
             const last = session.actions[session.actions.length - 1];
             if (last && last.type === 'navigate' && last.url === action.url) continue;
