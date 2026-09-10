@@ -175,13 +175,12 @@ async function startRecording(url) {
   // Start action polling
   startPolling();
 
-  // Inject recording script into start tab
+  // Inject recording script into start tab only — do NOT sweep pre-existing tabs.
+  // Tabs that existed before recording and never receive an action must NOT
+  // be part of the workflow. New tabs will be injected onCreated/onUpdated.
   await injectIntoTab(tab.id, tabUrl);
 
-  // Sweep all open tabs and inject into any that need it
-  await sweepAndInjectAllTabs();
-
-  console.log(`[Wally] Recording started: ${session.id}`);
+  console.log(`[Wally] Recording started: ${session.id} (tab ${tab.id})`);
   return true;
 }
 
