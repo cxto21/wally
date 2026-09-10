@@ -214,6 +214,16 @@ function renderSessions(sessions) {
     const actions = document.createElement('div');
     actions.className = 'session-actions';
 
+    const replayBtn = document.createElement('button');
+    replayBtn.className = 'session-btn replay';
+    replayBtn.textContent = '▶';
+    replayBtn.title = 'Replay';
+    replayBtn.style.background = '#28a745';
+    replayBtn.style.color = 'white';
+    replayBtn.addEventListener('click', () => {
+      replaySession(sess.id);
+    });
+
     const expBtn = document.createElement('button');
     expBtn.className = 'session-btn export';
     expBtn.textContent = '⬇';
@@ -234,12 +244,52 @@ function renderSessions(sessions) {
       });
     });
 
+    actions.appendChild(replayBtn);
     actions.appendChild(expBtn);
     actions.appendChild(delBtn);
     item.appendChild(info);
     item.appendChild(actions);
     sessionsEl.appendChild(item);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REPLAY
+// ═══════════════════════════════════════════════════════════════
+
+function replaySession(sessionId) {
+  statusEl.className = 'status recording';
+  statusText.textContent = 'Replaying...';
+  recordBtn.style.display = 'none';
+  stopBtn.style.display = 'none';
+  exportBtn.disabled = true;
+  logSection.style.display = 'block';
+  logEl.innerHTML = '';
+  lastActionCount = 0;
+
+  // Add replay entry
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.innerHTML = `<span class="time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span> <span class="type">replay</span> <span class="detail">Starting replay...</span>`;
+  logEl.appendChild(entry);
+
+  chrome.runtime.sendMessage({ type: 'replay_session', id: sessionId }, (res) => {
+    if (res && res.ok) {
+      statusEl.className = 'status idle';
+      statusText.textContent = `Replayed ${res.replayed}/${res.total} actions`;
+      recordBtn.style.display = 'block';
+
+      const doneEntry = document.createElement('div');
+      doneEntry.className = 'log-entry';
+      doneEntry.innerHTML = `<span class="time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span> <span class="type">done</span> <span class="detail">Replay finished (${res.replayed} actions)</span>`;
+      logEl.appendChild(doneEntry);
+      logEl.scrollTop = logEl.scrollHeight;
+    } else {
+      statusEl.className = 'status idle';
+      statusText.textContent = res?.error || 'Replay failed';
+      recordBtn.style.display = 'block';
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

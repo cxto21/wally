@@ -18,6 +18,7 @@ import { attachPopup, injectRecording, pollPopup, detachPopup, detachAllPopup } 
 let session = null;
 let pollTimer = null;
 let popupPollTimer = null;
+let replayState = null;
 
 // ═══════════════════════════════════════════════════════════════
 // ACTION ICON — open side panel
@@ -55,6 +56,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'get_status':
       sendResponse({ state: session?.state || 'idle', sessionId: session?.id || null });
+      return false;
+
+    case 'replay_session':
+      replaySession(message.id).then(r => sendResponse(r));
+      return true;
+
+    case 'get_replay_status':
+      sendResponse({ replaying: !!replayState, sessionId: replayState?.sessionId || null });
       return false;
 
     // Content script relay: actions from normal pages
@@ -430,6 +439,209 @@ async function exportSession(id) {
 async function deleteSession(id) {
   await chrome.storage.local.remove(`wally-session-${id}`);
   return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REPLAY — replay a recorded session (like CLI: wally play)
+// ═══════════════════════════════════════════════════════════════
+
+async function replaySession(sessionId) {
+  if (replayState) return { ok: false, error: 'Already replaying' };
+  if (session && session.state === 'recording') return { ok: false, error: 'Cannot replay while recording' };
+
+  const data = await chrome.storage.local.get(`wally-session-${sessionId}`);
+  const sess = data[`wally-session-${sessionId}`];
+  if (!sess || !sess.actions || sess.actions.length === 0) {
+    return { ok: false, error: 'Session not found or empty' };
+  }
+
+  replayState = { sessionId, currentIndex: 0, total: sess.actions.length };
+
+  console.log(`[Wally] Replaying session ${sessionId} (${sess.actions.length} actions)`);
+
+  try {
+    // Navigate to start URL if available
+    if (sess.startUrl) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) {
+        await chrome.tabs.update(tab.id, { url: sess.startUrl });
+        await waitForTabLoad(tab.id);
+      }
+    }
+
+    // Replay each action with delay
+    for (let i = 0; i < sess.actions.length; i++) {
+      if (!replayState) break; // replay cancelled
+
+      replayState.currentIndex = i;
+      const action = sess.actions[i];
+
+      // Skip navigate actions (already handled)
+      if (action.type === 'navigate') continue;
+
+      await replayAction(action);
+
+      // Delay between actions (like real user behavior)
+      const delay = getActionDelay(action);
+      await new Promise(r => setTimeout(r, delay));
+    }
+
+    const result = { ok: true, replayed: replayState.currentIndex, total: sess.actions.length };
+    replayState = null;
+    console.log(`[Wally] Replay finished: ${result.replayed}/${result.total}`);
+    return result;
+  } catch (e) {
+    const error = e.message || String(e);
+    replayState = null;
+    console.error(`[Wally] Replay failed:`, error);
+    return { ok: false, error };
+  }
+}
+
+function getActionDelay(action) {
+  // Realistic delays based on action type
+  switch (action.type) {
+    case 'click': return 500;
+    case 'fill': return 300;
+    case 'select': return 400;
+    case 'press': return 200;
+    case 'scroll': return 300;
+    case 'dblclick': return 400;
+    case 'check': case 'uncheck': return 300;
+    default: return 500;
+  }
+}
+
+async function replayAction(action) {
+  // Get the active tab
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: false },
+      world: 'MAIN',
+      func: (act) => {
+        function resolveSelector(sel) {
+          if (!sel) return null;
+          // Try as CSS selector
+          try { return document.querySelector(sel); } catch {}
+          // Try text match
+          const byText = document.evaluate(
+            `//button[contains(text(),"${sel}")] | //a[contains(text(),"${sel}")]`,
+            document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+          ).singleNodeValue;
+          if (byText) return byText;
+          return null;
+        }
+
+        function getOffset(el) {
+          const rect = el.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+
+        function simulateClick(el, opts = {}) {
+          const pos = getOffset(el);
+          const eventOpts = { bubbles: true, cancelable: true, view: window, clientX: pos.x, clientY: pos.y, ...opts };
+          el.dispatchEvent(new PointerEvent('pointerdown', eventOpts));
+          el.dispatchEvent(new MouseEvent('mousedown', eventOpts));
+          el.focus();
+          el.dispatchEvent(new PointerEvent('pointerup', eventOpts));
+          el.dispatchEvent(new MouseEvent('mouseup', eventOpts));
+          el.dispatchEvent(new MouseEvent('click', eventOpts));
+        }
+
+        const el = resolveSelector(act.selector);
+        if (!el) return { ok: false, error: 'Element not found: ' + act.selector };
+
+        switch (act.type) {
+          case 'click':
+            simulateClick(el);
+            return { ok: true };
+          case 'dblclick':
+            simulateClick(el);
+            setTimeout(() => simulateClick(el), 100);
+            el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
+            return { ok: true };
+          case 'fill':
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+              el.focus();
+              el.value = act.value || '';
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            } else if (el.isContentEditable) {
+              el.textContent = act.value || '';
+              el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+            }
+            return { ok: true };
+          case 'select':
+            if (el.tagName === 'SELECT') {
+              const val = (act.options && act.options[0]) || act.value || '';
+              for (const opt of el.options) {
+                if (opt.value === val || opt.textContent.trim() === val) {
+                  el.value = opt.value;
+                  break;
+                }
+              }
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            return { ok: true };
+          case 'press':
+            el.focus();
+            const keyEvt = new KeyboardEvent('keydown', {
+              key: act.key, code: 'Key' + act.key.toUpperCase(),
+              bubbles: true, cancelable: true,
+              ctrlKey: (act.modifiers || []).includes('Control'),
+              shiftKey: (act.modifiers || []).includes('Shift'),
+              altKey: (act.modifiers || []).includes('Alt'),
+              metaKey: (act.modifiers || []).includes('Meta'),
+            });
+            el.dispatchEvent(keyEvt);
+            el.dispatchEvent(new KeyboardEvent('keyup', {
+              key: act.key, bubbles: true, cancelable: true,
+            }));
+            if (act.key === 'Enter') {
+              const form = el.form || el.closest('form');
+              if (form) form.submit();
+            }
+            return { ok: true };
+          case 'check':
+            if (el.type === 'checkbox') { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
+            return { ok: true };
+          case 'uncheck':
+            if (el.type === 'checkbox') { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); }
+            return { ok: true };
+          case 'scroll':
+            window.scrollBy(0, 300);
+            return { ok: true };
+          default:
+            return { ok: false, error: 'Unsupported action type: ' + act.type };
+        }
+      },
+      args: [action],
+    });
+  } catch (e) {
+    console.warn('[Wally] Replay action failed:', e.message);
+  }
+}
+
+function waitForTabLoad(tabId, timeoutMs = 10000) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
+      setTimeout(resolve, 500);
+    };
+    const listener = (id, info) => {
+      if (id === tabId && info.status === 'complete') finish();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    const timer = setTimeout(finish, timeoutMs);
+    chrome.tabs.get(tabId).then(t => { if (t && t.status === 'complete') finish(); }).catch(finish);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
