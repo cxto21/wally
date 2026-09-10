@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Wally — Browser Interaction Recorder",
   "short_name": "Wally",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Records browser interactions and exports Playwright test scripts",
   "author": "Wally contributors",
   "permissions": [
@@ -13,8 +13,7 @@
     "activeTab",
     "webNavigation",
     "downloads",
-    "alarms",
-    "devtools.recorder"
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"
