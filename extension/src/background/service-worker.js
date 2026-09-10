@@ -26,6 +26,25 @@ let replayState = null;
  */
 const trackedTabs = new Map();
 
+/**
+ * nativeRecordedTabs: Set<tabId>
+ * Tabs where Recorder plugin delivered actions (native recording path).
+ * Used to: (1) skip inject injection for these tabs, (2) dedup at merge time.
+ */
+const nativeRecordedTabs = new Set();
+
+/**
+ * nativeActions: Map<tabId, WallyAction[]>
+ * Accumulated actions from Recorder plugin (MSG_RECORDER_ACTIONS).
+ * Merged into session.actions at stop, sorted by ts.
+ */
+const nativeActions = new Map();
+
+// Message types for DevTools Recorder ↔ SW contract
+const MSG_RECORDER_ACTIONS = 'recorder_actions';
+const MSG_RECORDER_REPLAY = 'recorder_replay';
+const MSG_RECORDER_TAB_STATUS = 'recorder_tab_status';
+
 // ═══════════════════════════════════════════════════════════════
 // ACTION ICON — open side panel
 // ═══════════════════════════════════════════════════════════════
@@ -108,6 +127,76 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
+    // ── DevTools Recorder plugin → SW ────────────────────────────
+
+    // Task 3.1: Receive converted Wally actions from Recorder plugin.
+    // Each tab's DevTools page sends its recording on export (stringify).
+    // Actions are accumulated per-tab and merged at stop.
+    case MSG_RECORDER_ACTIONS: {
+      if (session && session.state === 'recording' && message.tabId != null) {
+        nativeRecordedTabs.add(message.tabId);
+        const meta = trackedTabs.get(message.tabId);
+        const stampedActions = (message.actions || []).map(a => ({
+          ts: new Date().toISOString(),
+          ...a,
+          tabId: message.tabId,
+          tabUrl: message.url || meta?.url || '',
+          url: a.url || message.url || meta?.url || '',
+          page: a.page || message.page || meta?.page || '',
+        }));
+        if (!nativeActions.has(message.tabId)) nativeActions.set(message.tabId, []);
+        nativeActions.get(message.tabId).push(...stampedActions);
+        // Forward each to bridge live channel (best-effort)
+        for (const action of stampedActions) {
+          postActionToBridge(session.id, action);
+        }
+        debouncedFlush();
+      }
+      return false;
+    }
+
+    // Task 3.4: Replay via Recorder plugin. Reject if recording active,
+    // otherwise create temp session and dispatch to existing replay engine.
+    case MSG_RECORDER_REPLAY: {
+      if (session && session.state === 'recording') {
+        sendResponse({ ok: false, error: 'Cannot replay while recording' });
+        return true;
+      }
+      const replayActions = message.actions || [];
+      if (replayActions.length === 0) {
+        sendResponse({ ok: false, error: 'No actions to replay' });
+        return true;
+      }
+      // Create temporary session for replay engine
+      const tempId = 'replay-' + Date.now();
+      const tempSession = {
+        id: tempId,
+        startUrl: message.tabUrl || '',
+        startTime: Date.now(),
+        actions: replayActions,
+        network: [],
+        exported: false,
+      };
+      await chrome.storage.local.set({ [`wally-session-${tempId}`]: tempSession });
+      replaySession(tempId).then(r => {
+        // Clean up temp session after replay
+        chrome.storage.local.remove(`wally-session-${tempId}`);
+        sendResponse(r);
+      }).catch(e => {
+        chrome.storage.local.remove(`wally-session-${tempId}`);
+        sendResponse({ ok: false, error: e.message || 'Replay failed' });
+      });
+      return true;
+    }
+
+    // Task 3.7: Respond with tab's recording state (native vs inject).
+    case MSG_RECORDER_TAB_STATUS: {
+      const isActive = session?.state === 'recording';
+      const isNative = message.tabId != null && nativeRecordedTabs.has(message.tabId);
+      sendResponse({ active: isActive, native: isNative });
+      return false;
+    }
+
     default:
       return false;
   }
@@ -163,6 +252,10 @@ async function startRecording(url) {
     keepAliveTimer: null,
   };
 
+  // Reset native recording state for fresh session
+  nativeRecordedTabs.clear();
+  nativeActions.clear();
+
   // Track the start tab with per-tab url/page
   trackedTabs.set(tab.id, { url: tabUrl, page: tabPage });
 
@@ -200,17 +293,29 @@ async function stopRecording() {
   stopPolling();
 
   // Merge bridge-captured actions (popup recordings via daemon ext-aux)
+  let bridgeActions = [];
   try {
-    const bridgeActions = await fetchBridgeActions(session.id);
+    bridgeActions = await fetchBridgeActions(session.id);
     if (bridgeActions.length > 0) {
       console.log(`[Wally] Merging ${bridgeActions.length} bridge actions`);
-      session.actions = session.actions.concat(bridgeActions);
-      // Sort by timestamp for correct ordering
-      session.actions.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
     }
   } catch (e) {
     console.warn('[Wally] Bridge merge failed:', e.message);
   }
+
+  // Task 3.6: Dedup — remove inject-path actions for native tabs
+  // (prevent double-counting when both paths captured the same tab)
+  const injectActions = session.actions.filter(a => {
+    return a.tabId == null || !nativeRecordedTabs.has(a.tabId);
+  });
+
+  // Task 3.5: Merge all three sources and sort by timestamp
+  const allNative = [];
+  for (const [, actions] of nativeActions) {
+    allNative.push(...actions);
+  }
+  session.actions = [...injectActions, ...allNative, ...bridgeActions];
+  session.actions.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
 
   // Final buffer flush
   await flushBuffer();
@@ -222,6 +327,8 @@ async function stopRecording() {
   const id = session.id;
   session = null;
   trackedTabs.clear();
+  nativeRecordedTabs.clear();
+  nativeActions.clear();
 
   console.log(`[Wally] Recording stopped: ${id} (${count} actions)`);
   return { ok: true, sessionId: id, actionCount: count };
@@ -240,6 +347,9 @@ async function stopRecording() {
  */
 async function injectIntoTab(tabId, tabUrl) {
   if (!session || session.state !== 'recording') return;
+
+  // Task 3.2: Skip tabs on native Recorder path (no inject needed)
+  if (nativeRecordedTabs.has(tabId)) return;
 
   // Resolve URL if not provided
   if (!tabUrl) {
