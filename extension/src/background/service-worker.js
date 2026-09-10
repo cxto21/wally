@@ -93,7 +93,12 @@ async function startRecording(url) {
     startUrl: url || tab.url || '',
     startTabId: tab.id,
     startTime: Date.now(),
-    actions: [],
+    actions: [{
+      ts: new Date().toISOString(),
+      type: 'navigate',
+      url: url || tab.url || '',
+      page: new URL(url || tab.url || '').hostname || '',
+    }],
     network: [],
     popupTabIds: [],
     keepAliveTimer: null,
@@ -107,6 +112,9 @@ async function startRecording(url) {
 
   // Start popup polling
   startPopupPoll();
+
+  // Start action polling
+  startPolling();
 
   // Send recording start to content script on active tab
   try {
@@ -131,6 +139,9 @@ async function stopRecording() {
 
   // Stop popup polling
   stopPopupPoll();
+
+  // Stop action polling
+  stopPolling();
 
   // Send recording stop to content script
   try {
@@ -229,7 +240,7 @@ async function attachPopupTab(tabId) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// POLLING — read actions from all tracked targets
+// POLLING — read actions via chrome.scripting (MAIN world)
 // ═══════════════════════════════════════════════════════════════
 
 function startPolling() {
@@ -245,6 +256,34 @@ function stopPolling() {
 
 async function pollAllTargets() {
   if (!session || session.state !== 'recording') return;
+
+  // Poll the active tab for actions via MAIN world
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.url && !tab.url.startsWith('chrome-extension://')) {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        world: 'MAIN',
+        func: () => {
+          const actions = window.__wally_actions || [];
+          window.__wally_actions = [];
+          return actions;
+        },
+      });
+      if (results && results[0] && results[0].result) {
+        for (const action of results[0].result) {
+          session.actions.push({
+            ts: new Date().toISOString(),
+            ...action,
+            url: action.url || tab.url || '',
+            page: new URL(tab.url).hostname || tab.url,
+          });
+        }
+      }
+    }
+  } catch {
+    // Tab may have navigated away or been closed
+  }
 
   // Poll popup tabs via CDP
   for (const tabId of [...session.popupTabIds]) {
@@ -489,11 +528,12 @@ async function downloadSession(sessionId) {
   const session = data[`wally-session-${sessionId}`];
   if (!session) return;
 
-  const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
+  // Service workers don't have URL.createObjectURL — use data: URL
+  const json = JSON.stringify(session, null, 2);
+  const dataUrl = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
 
   chrome.downloads.download({
-    url,
+    url: dataUrl,
     filename: `wally-session-${sessionId}.json`,
     saveAs: true,
   });

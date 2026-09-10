@@ -1,21 +1,19 @@
 /**
  * Wally Extension — Content Script (plain script, no ES modules)
  *
- * Injects recording-inject.js into the page's main world,
- * listens for captured actions via CustomEvents, and relays them
- * to the service worker. Also handles SW→CS recording control.
+ * Injects recording-inject.js into the page's main world on load.
+ * Action polling is done by the service worker via chrome.scripting.executeScript.
+ * This script handles recording start/stop signals from the SW.
  */
 
 (function() {
   "use strict";
 
-  var recording = false;
   var injected = false;
 
   // Message constants (inlined — content scripts can't use import)
   var MSG_CS_RECORDING_START = 'cs_recording_start';
   var MSG_CS_RECORDING_STOP = 'cs_recording_stop';
-  var MSG_CS_READ_ACTIONS = 'cs_read_actions';
   var MSG_CS_PING = 'cs_ping';
 
   // ═══════════════════════════════════════════════════════════════
@@ -33,47 +31,8 @@
       (document.head || document.documentElement).appendChild(script);
       script.onload = function() { script.remove(); };
     } catch (e) {
-      // Fallback: try inline injection
       console.warn('[Wally] Could not inject recording script:', e.message);
     }
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // BRIDGE — relay main-world actions → SW via chrome.runtime
-  // ═══════════════════════════════════════════════════════════════
-
-  function setupBridge() {
-    window.addEventListener('__wally_action', function(e) {
-      if (!recording) return;
-      var action = e.detail;
-      if (!action || !action.type) return;
-
-      chrome.runtime.sendMessage({
-        type: 'cs_step',
-        ts: new Date().toISOString(),
-        selector: action.selector,
-        type: action.type,
-        text: action.text,
-        value: action.value,
-        key: action.key,
-        modifiers: action.modifiers,
-        button: action.button,
-        position: action.position,
-        files: action.files,
-        options: action.options,
-        scrollTop: action.scrollTop,
-        scrollLeft: action.scrollLeft,
-        clickCount: action.clickCount,
-        url: action.url || location.href,
-        page: action.page || '',
-        heading: action.heading,
-        flow: action.flow,
-        network: action.network,
-        account: action.account,
-        extensionType: action.extensionType,
-        provider: action.provider,
-      }).catch(function() {});
-    });
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -83,22 +42,14 @@
   chrome.runtime.onMessage.addListener(function(message, _sender, sendResponse) {
     switch (message.type) {
       case MSG_CS_RECORDING_START:
-        recording = true;
         injectRecordingScript();
         sendResponse({ ok: true });
         return false;
 
       case MSG_CS_RECORDING_STOP:
-        recording = false;
+        // Nothing to stop — recording script is self-contained
         sendResponse({ ok: true });
         return false;
-
-      case MSG_CS_READ_ACTIONS: {
-        var actions = window.__wally_actions || [];
-        window.__wally_actions = [];
-        sendResponse({ actions: actions });
-        return false;
-      }
 
       case MSG_CS_PING:
         sendResponse({ alive: true });
@@ -110,9 +61,8 @@
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // INIT
+  // INIT — inject early so the page is ready when recording starts
   // ═══════════════════════════════════════════════════════════════
 
   injectRecordingScript();
-  setupBridge();
 })();
