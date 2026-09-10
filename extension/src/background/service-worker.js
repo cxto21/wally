@@ -103,6 +103,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Filter copy/paste/select-all shortcuts (Ctrl/Cmd + single letter)
         if (message.type === 'press' && message.modifiers && message.modifiers.length > 0
             && message.key && message.key.length === 1 && /[a-z]/i.test(message.key)) return false;
+        // Deduplicate rapid SPA navigates (aistudio pushes hash navigates every 500ms)
+        if (message.type === 'navigate') {
+          const last = session.actions[session.actions.length - 1];
+          if (last && last.type === 'navigate' && last.url === message.url) return false;
+          if (last && last.type === 'navigate' && last.url && message.url && last.url.split('#')[0] === message.url.split('#')[0] && Date.now() - new Date(last.ts).getTime() < 2000) return false;
+        }
         const tabId = sender.tab?.id;
         const meta = tabId ? trackedTabs.get(tabId) : null;
         const action = {
@@ -479,6 +485,12 @@ async function pollAllTargets() {
           if (action.type === 'click_detected' || action.type === 'page_change') continue;
           if (action.type === 'press' && action.modifiers && action.modifiers.length > 0
               && action.key && action.key.length === 1 && /[a-z]/i.test(action.key)) continue;
+          // Deduplicate SPA hash navigates (aistudio)
+          if (action.type === 'navigate') {
+            const last = session.actions[session.actions.length - 1];
+            if (last && last.type === 'navigate' && last.url === action.url) continue;
+            if (last && last.type === 'navigate' && last.url && action.url && last.url.split('#')[0] === action.url.split('#')[0] && Date.now() - new Date(last.ts).getTime() < 2000) continue;
+          }
           const stamped = {
             ts: new Date().toISOString(),
             ...action,
