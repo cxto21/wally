@@ -1,86 +1,118 @@
 /**
- * Wally Extension — Content Script
+ * Wally Extension — Content Script (plain script, no ES modules)
  *
- * Injects the RECORDING_SCRIPT IIFE into the page's main world,
+ * Injects recording-inject.js into the page's main world,
  * listens for captured actions via CustomEvents, and relays them
- * to the service worker. Also handles SW→CS recording control
- * messages and provides cs_read_actions for buffered retrieval.
+ * to the service worker. Also handles SW→CS recording control.
  */
 
-import { RECORDING_SCRIPT, MSG_CS_RECORDING_START, MSG_CS_RECORDING_STOP, MSG_CS_READ_ACTIONS, MSG_CS_PING } from '../common/constants.js';
+(function() {
+  "use strict";
 
-let recording = false;
-let injected = false;
+  var recording = false;
+  var injected = false;
 
-// ═══════════════════════════════════════════════════════════════
-// INJECTION — inject RECORDING_SCRIPT into the page's main world
-// ═══════════════════════════════════════════════════════════════
+  // Message constants (inlined — content scripts can't use import)
+  var MSG_CS_RECORDING_START = 'cs_recording_start';
+  var MSG_CS_RECORDING_STOP = 'cs_recording_stop';
+  var MSG_CS_READ_ACTIONS = 'cs_read_actions';
+  var MSG_CS_PING = 'cs_ping';
 
-function injectRecordingScript() {
-  if (injected) return;
-  injected = true;
+  // ═══════════════════════════════════════════════════════════════
+  // INJECTION — inject recording-inject.js into the page's main world
+  // ═══════════════════════════════════════════════════════════════
 
-  const script = document.createElement('script');
-  script.textContent = RECORDING_SCRIPT;
-  (document.head || document.documentElement).appendChild(script);
-  script.remove();
-}
+  function injectRecordingScript() {
+    if (injected) return;
+    injected = true;
 
-// ═══════════════════════════════════════════════════════════════
-// BRIDGE — relay main-world actions → SW via chrome.runtime
-// ═══════════════════════════════════════════════════════════════
-
-function setupBridge() {
-  window.addEventListener('__wally_action', (e) => {
-    if (!recording) return;
-    const action = e.detail;
-    if (!action || !action.type) return;
-
-    chrome.runtime.sendMessage({
-      type: 'cs_step',
-      ts: new Date().toISOString(),
-      ...action,
-      url: location.href,
-    }).catch(() => {});
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════
-// MESSAGE HANDLER — SW → CS control + CS → SW queries
-// ═══════════════════════════════════════════════════════════════
-
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  switch (message.type) {
-    case MSG_CS_RECORDING_START:
-      recording = true;
-      injectRecordingScript();
-      sendResponse({ ok: true });
-      return false;
-
-    case MSG_CS_RECORDING_STOP:
-      recording = false;
-      sendResponse({ ok: true });
-      return false;
-
-    case MSG_CS_READ_ACTIONS: {
-      const actions = window.__wally_actions || [];
-      window.__wally_actions = [];
-      sendResponse({ actions });
-      return false;
+    try {
+      var url = chrome.runtime.getURL('src/content/recording-inject.js');
+      var script = document.createElement('script');
+      script.src = url;
+      (document.head || document.documentElement).appendChild(script);
+      script.onload = function() { script.remove(); };
+    } catch (e) {
+      // Fallback: try inline injection
+      console.warn('[Wally] Could not inject recording script:', e.message);
     }
-
-    case MSG_CS_PING:
-      sendResponse({ alive: true });
-      return false;
-
-    default:
-      return false;
   }
-});
 
-// ═══════════════════════════════════════════════════════════════
-// INIT — inject early so the page is ready when recording starts
-// ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════
+  // BRIDGE — relay main-world actions → SW via chrome.runtime
+  // ═══════════════════════════════════════════════════════════════
 
-injectRecordingScript();
-setupBridge();
+  function setupBridge() {
+    window.addEventListener('__wally_action', function(e) {
+      if (!recording) return;
+      var action = e.detail;
+      if (!action || !action.type) return;
+
+      chrome.runtime.sendMessage({
+        type: 'cs_step',
+        ts: new Date().toISOString(),
+        selector: action.selector,
+        type: action.type,
+        text: action.text,
+        value: action.value,
+        key: action.key,
+        modifiers: action.modifiers,
+        button: action.button,
+        position: action.position,
+        files: action.files,
+        options: action.options,
+        scrollTop: action.scrollTop,
+        scrollLeft: action.scrollLeft,
+        clickCount: action.clickCount,
+        url: action.url || location.href,
+        page: action.page || '',
+        heading: action.heading,
+        flow: action.flow,
+        network: action.network,
+        account: action.account,
+        extensionType: action.extensionType,
+        provider: action.provider,
+      }).catch(function() {});
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // MESSAGE HANDLER — SW → CS control
+  // ═══════════════════════════════════════════════════════════════
+
+  chrome.runtime.onMessage.addListener(function(message, _sender, sendResponse) {
+    switch (message.type) {
+      case MSG_CS_RECORDING_START:
+        recording = true;
+        injectRecordingScript();
+        sendResponse({ ok: true });
+        return false;
+
+      case MSG_CS_RECORDING_STOP:
+        recording = false;
+        sendResponse({ ok: true });
+        return false;
+
+      case MSG_CS_READ_ACTIONS: {
+        var actions = window.__wally_actions || [];
+        window.__wally_actions = [];
+        sendResponse({ actions: actions });
+        return false;
+      }
+
+      case MSG_CS_PING:
+        sendResponse({ alive: true });
+        return false;
+
+      default:
+        return false;
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // INIT
+  // ═══════════════════════════════════════════════════════════════
+
+  injectRecordingScript();
+  setupBridge();
+})();

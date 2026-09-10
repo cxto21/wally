@@ -48,6 +48,12 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/recording-inject.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "commands": {
     "_execute_action": {
       "suggested_key": {
