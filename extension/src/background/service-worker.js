@@ -84,7 +84,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function startRecording(url) {
   if (session && session.state === 'recording') return false;
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let tab;
+  if (url) {
+    // Open URL in new tab (like CLI: wally daemon start --url <url>)
+    tab = await chrome.tabs.create({ url, active: true });
+    // Wait for page to load
+    await new Promise(resolve => {
+      const listener = (tabId, info) => {
+        if (tabId === tab.id && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      // Timeout fallback
+      setTimeout(resolve, 5000);
+    });
+  } else {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  }
   if (!tab) return false;
 
   session = {
