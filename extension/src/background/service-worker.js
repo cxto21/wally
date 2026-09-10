@@ -177,14 +177,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         network: [],
         exported: false,
       };
-      await chrome.storage.local.set({ [`wally-session-${tempId}`]: tempSession });
-      replaySession(tempId).then(r => {
-        // Clean up temp session after replay
-        chrome.storage.local.remove(`wally-session-${tempId}`);
-        sendResponse(r);
-      }).catch(e => {
-        chrome.storage.local.remove(`wally-session-${tempId}`);
-        sendResponse({ ok: false, error: e.message || 'Replay failed' });
+      chrome.storage.local.set({ [`wally-session-${tempId}`]: tempSession }).then(() => {
+        replaySession(tempId).then(r => {
+          // Clean up temp session after replay
+          chrome.storage.local.remove(`wally-session-${tempId}`);
+          sendResponse(r);
+        }).catch(e => {
+          chrome.storage.local.remove(`wally-session-${tempId}`);
+          sendResponse({ ok: false, error: e.message || 'Replay failed' });
+        });
       });
       return true;
     }
