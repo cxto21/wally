@@ -13,7 +13,8 @@
     "activeTab",
     "debugger",
     "webNavigation",
-    "downloads"
+    "downloads",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"
