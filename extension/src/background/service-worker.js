@@ -75,8 +75,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Content script relay: actions from normal pages via CustomEvent bridge
     case 'cs_step':
       if (session && session.state === 'recording') {
-        // Filter synthetic polling events — not replayable, just telemetry
+        // Filter synthetic / non-replayable events
         if (message.type === 'click_detected' || message.type === 'page_change') return false;
+        // Filter copy/paste/select-all shortcuts (Ctrl/Cmd + single letter)
+        if (message.type === 'press' && message.modifiers && message.modifiers.length > 0
+            && message.key && message.key.length === 1 && /[a-z]/i.test(message.key)) return false;
         const tabId = sender.tab?.id;
         const meta = tabId ? trackedTabs.get(tabId) : null;
         const action = {
@@ -340,8 +343,10 @@ async function pollAllTargets() {
       });
       if (results && results[0] && results[0].result) {
         for (const action of results[0].result) {
-          // Filter synthetic polling events
+          // Filter synthetic / non-replayable events
           if (action.type === 'click_detected' || action.type === 'page_change') continue;
+          if (action.type === 'press' && action.modifiers && action.modifiers.length > 0
+              && action.key && action.key.length === 1 && /[a-z]/i.test(action.key)) continue;
           const stamped = {
             ts: new Date().toISOString(),
             ...action,
@@ -515,6 +520,13 @@ const RESOLVER_SOURCE = `function resolveSelectorGrammar(sel) {
             if ((tagEls[j].textContent || '').trim().indexOf(text) !== -1) return tagEls[j];
           }
         } catch(e) {}
+        // Fallback: any clickable with text (normalized, case-insensitive)
+        var norm = text.trim().toLowerCase().replace(/\s+/g,' ');
+        var all = document.querySelectorAll('button, a, [role="button"], [role="option"], [data-testid]');
+        for (var k = 0; k < all.length; k++) {
+          var t = (all[k].innerText || all[k].textContent || '').trim().toLowerCase().replace(/\s+/g,' ');
+          if (t.indexOf(norm) !== -1) return all[k];
+        }
         return null;
       }
     }
@@ -612,6 +624,12 @@ async function resolveInPage(tabId, selector) {
                   if ((tagEls[j].textContent || '').trim().indexOf(text) !== -1) return tagEls[j];
                 }
               } catch(e) {}
+              var norm = text.trim().toLowerCase().replace(/\s+/g,' ');
+              var all = document.querySelectorAll('button, a, [role="button"], [role="option"], [data-testid]');
+              for (var k = 0; k < all.length; k++) {
+                var t = (all[k].innerText || all[k].textContent || '').trim().toLowerCase().replace(/\s+/g,' ');
+                if (t.indexOf(norm) !== -1) return all[k];
+              }
               return null;
             }
           }
