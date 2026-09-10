@@ -19,7 +19,7 @@
     "<all_urls>"
   ],
   "background": {
-    "service_worker": "service-worker.js",
+    "service_worker": "src/background/service-worker.js",
     "type": "module"
   },
   "action": {
