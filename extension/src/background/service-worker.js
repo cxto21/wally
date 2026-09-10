@@ -936,6 +936,29 @@ async function resolveWithHierarchy(action, tabId) {
     }
   }
 
+  // Text fallback for generic nth-child selectors (e.g. main > section > div)
+  const texts = [action.text, action.nearbyText].filter(Boolean);
+  for (const raw of texts) {
+    const txt = raw.trim().slice(0, 40).replace(/"/g, "'");
+    if (!txt || txt.length < 4) continue;
+    totalAttempts++;
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: false },
+        world: 'MAIN',
+        func: (t) => {
+          const xpath = `//*[contains(normalize-space(text()), "${t}")]`;
+          try {
+            const r = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            return !!r;
+          } catch { return false; }
+        },
+        args: [txt]
+      });
+      if (results?.[0]?.result) return { found: true, strategy: `text="${txt}"`, attempts: totalAttempts };
+    } catch {}
+  }
+
   return { found: false, strategy: null, attempts: totalAttempts };
 }
 
@@ -1187,6 +1210,27 @@ async function replayAction(action, targetTabId) {
               }
             }
             return current;
+          }
+          // Text fallback for generic selectors like main > section > div
+          if (act.text) {
+            const txt = act.text.trim().slice(0, 40).replace(/"/g, "'");
+            if (txt.length >= 4) {
+              try {
+                const xpath = `//*[contains(normalize-space(text()), "${txt}")]`;
+                const r = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                if (r) return r;
+              } catch {}
+            }
+          }
+          if (act.nearbyText) {
+            const ntxt = act.nearbyText.trim().slice(0, 40).replace(/"/g, "'");
+            if (ntxt.length >= 4) {
+              try {
+                const xpath2 = `//*[contains(normalize-space(text()), "${ntxt}")]`;
+                const r2 = document.evaluate(xpath2, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                if (r2) return r2;
+              } catch {}
+            }
           }
           return null;
         }
